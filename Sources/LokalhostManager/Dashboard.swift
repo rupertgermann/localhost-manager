@@ -9,6 +9,7 @@ struct Dashboard: View {
     @State private var systemServices = false
     @State private var creatingProject = false
     @State private var editing: ServiceRow?
+    @State private var dockerLogs: DockerContainer?
 
     var body: some View {
         let listeners = docker.inventory.nativeListeners(store.inventory.listeners)
@@ -80,6 +81,7 @@ struct Dashboard: View {
         }
         .frame(minWidth: 780, minHeight: 440)
         .sheet(isPresented: $creatingProject) { ProjectEditor() }
+        .sheet(item: $dockerLogs) { DockerLogPanel(docker: docker, container: $0) }
         .sheet(item: $editing) { ServiceEditor(row: $0) }
         .task {
             while !Task.isCancelled {
@@ -123,7 +125,7 @@ struct Dashboard: View {
                 if row.id != rows.last?.id || !containers.isEmpty { Divider() }
             }
             ForEach(containers) { row in
-                DockerServiceView(docker: docker, row: row).padding(.horizontal, 12).padding(.vertical, 9)
+                DockerServiceView(docker: docker, row: row, showLogs: { dockerLogs = $0 }).padding(.horizontal, 12).padding(.vertical, 9)
                 if row.id != containers.last?.id { Divider() }
             }
         }.background(.background, in: RoundedRectangle(cornerRadius: 9))
