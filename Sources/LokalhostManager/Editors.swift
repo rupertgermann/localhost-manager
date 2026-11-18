@@ -85,6 +85,14 @@ struct ServiceEditor: View {
             Text("Der bestätigte Befehl läuft mit /bin/sh. Projektprogramme können mit ihrem Pfad angegeben werden.")
                 .font(.caption).foregroundStyle(.secondary)
             LabeledContent("Env-Datei (optional)") { TextField("Env-Datei (optional)", text: field(\.envFile)).labelsHidden() }
+            HStack {
+                TextField("Logdatei", text: Binding(get: { record.logPath ?? "" }, set: { record.logPath = $0.isEmpty ? nil : $0 }))
+                    .accessibilityLabel("Logdatei")
+                Button("Datei auswählen …") {
+                    let panel = NSOpenPanel()
+                    if panel.runModal() == .OK { record.logPath = panel.url?.path }
+                }
+            }
             VStack(alignment: .leading, spacing: 5) {
                 Text("Webziele").font(.headline)
                 Text("Pro Zeile eine lokale HTTP- oder HTTPS-Adresse mit aktivem Host-Port.").font(.callout).foregroundStyle(.secondary)
@@ -128,6 +136,11 @@ struct ServiceEditor: View {
             if let path = edited.envFile { edited.envFile = (path as NSString).expandingTildeInPath }
             if edited.startCommand != nil, edited.directory?.hasPrefix("/") != true {
                 throw ManagerError("Ein Startprofil benötigt einen absoluten Arbeitsordner.")
+            }
+            if let path = edited.logPath {
+                let expanded = (path as NSString).expandingTildeInPath
+                guard expanded.hasPrefix("/") else { throw ManagerError("Bitte einen absoluten Pfad zur Logdatei angeben.") }
+                edited.logPath = expanded
             }
             edited.webTargets = urls
             if let identity = row.listener?.identity { edited.lastIdentity = identity }

@@ -126,7 +126,11 @@ struct Dashboard: View {
             if let record = row.record, record.startCommand != nil, !running {
                 Button("Starten") { Task { await store.start(record) } }.disabled(busy || error != nil || !store.ready)
             }
-            if let run = row.managed?.run { ManagedLogsButton(name: row.name, run: run) }
+            if let state = row.managed, state.isRunning || row.listener == nil {
+                ManagedLogsButton(name: row.name, run: state.run)
+            } else {
+                ExternalServiceActions(row: row)
+            }
             Button("Bearbeiten") { editing = row }.disabled(!store.ready)
         }
     }

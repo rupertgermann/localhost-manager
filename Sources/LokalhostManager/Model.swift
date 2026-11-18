@@ -16,6 +16,7 @@ struct ServiceRecord: Identifiable, Codable {
     var executable: String?
     var lastIdentity: ProcessIdentity?
     var webTargets: [URL] = []
+    var logPath: String?
 }
 
 struct ServiceRow: Identifiable {

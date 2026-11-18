@@ -1,0 +1,30 @@
+import Darwin
+import Foundation
+
+enum FileLog: Equatable {
+    case unavailable(String)
+    case empty
+    case output(String, truncated: Bool)
+
+    static func read(path: String?) -> Self {
+        guard let path, !path.isEmpty else {
+            return .unavailable("Keine Logdatei hinterlegt. Unter „Bearbeiten“ eine Logdatei auswählen.")
+        }
+        let fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC | O_NOCTTY)
+        guard fd >= 0 else { return .unavailable("Logdatei nicht lesbar: \(String(cString: strerror(errno))).") }
+        let file = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        do {
+            var info = stat()
+            guard fstat(fd, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG else {
+                return .unavailable("Die Logquelle ist keine reguläre Datei.")
+            }
+            let limit = 64 * 1024
+            let offset = max(0, info.st_size - off_t(limit))
+            try file.seek(toOffset: UInt64(offset))
+            guard let bytes = try file.read(upToCount: limit), !bytes.isEmpty else { return .empty }
+            return .output(String(decoding: bytes, as: UTF8.self), truncated: offset > 0)
+        } catch {
+            return .unavailable("Logdatei nicht lesbar: \(error.localizedDescription)")
+        }
+    }
+}

@@ -7,6 +7,7 @@ final class AppStore: ObservableObject {
     @Published private(set) var inventory = ListenerInventory(listeners: [], warning: nil)
     @Published private(set) var refreshing = false
     @Published private(set) var ready = false
+    @Published private(set) var stoppingExternal: String?
     @Published var message: String?
     let dataDirectory: URL
     private var saving = false
@@ -45,9 +46,10 @@ final class AppStore: ObservableObject {
         defer { refreshing = false }
         repeat {
             refreshRequested = false
-            do { inventory = try await ListenerInventory.scan() }
-            catch { inventory = ListenerInventory(listeners: [], warning: error.localizedDescription) }
-            let jobs = ManagedJobs(directory: dataDirectory), services = catalog.services, listeners = inventory.listeners
+            let snapshot: ListenerInventory
+            do { snapshot = try await ListenerInventory.scan() }
+            catch { snapshot = ListenerInventory(listeners: [], warning: error.localizedDescription) }
+            let jobs = ManagedJobs(directory: dataDirectory), services = catalog.services, listeners = snapshot.listeners
             (managed, managedErrors) = await Task.detached {
                 var states: [UUID: ManagedStatus] = [:], errors: [UUID: String] = [:]
                 for service in services {
@@ -56,6 +58,7 @@ final class AppStore: ObservableObject {
                 }
                 return (states, errors)
             }.value
+            inventory = snapshot
         } while refreshRequested
     }
 
@@ -66,6 +69,20 @@ final class AppStore: ObservableObject {
         let jobs = ManagedJobs(directory: dataDirectory)
         do { try await Task.detached { try jobs.start(service) }.value }
         catch { message = error.localizedDescription }
+        await refresh()
+    }
+
+    func stopExternal(_ listener: LocalListener, row: ServiceRow) async {
+        guard stoppingExternal == nil else { return }
+        stoppingExternal = row.id
+        defer { stoppingExternal = nil }
+        do {
+            try await ExternalProcess.stop(listener)
+            message = "\(row.name) wurde gestoppt."
+        } catch { message = "\(row.name): \(error.localizedDescription)" }
+        while refreshing {
+            do { try await Task.sleep(for: .milliseconds(50)) } catch { return }
+        }
         await refresh()
     }
 
