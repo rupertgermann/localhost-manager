@@ -11,6 +11,23 @@ final class ManagedTests: XCTestCase {
         }
     }
 
+    func testMissingEnvAndMissingProgramHaveDistinctStartErrors() throws {
+        guard ProcessInfo.processInfo.environment["LOKALHOST_TEST_LAUNCHD"] == "1" else {
+            throw XCTSkip("Benötigt eine lokale macOS-GUI-Anmeldung mit launchd.")
+        }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("Start Errors \(UUID())", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let jobs = ManagedJobs(directory: folder)
+        var record = ServiceRecord(name: "Fehlstart", directory: folder.path, startCommand: "./missing-program", envFile: "missing.env")
+        XCTAssertThrowsError(try jobs.start(record)) { XCTAssertTrue($0.localizedDescription.contains("missing.env")) }
+        XCTAssertNil(try jobs.status(record.id))
+        record.envFile = nil
+        defer { if let state = try? jobs.status(record.id) { try? jobs.bootout(state.run) } }
+        XCTAssertThrowsError(try jobs.start(record)) { XCTAssertTrue($0.localizedDescription.contains("Programm nicht gefunden"), $0.localizedDescription) }
+        XCTAssertEqual(try jobs.status(record.id)?.exitCode, 127)
+    }
+
     func testTransientJobSurvivesManagerRecreationAndDoesNotAutostart() async throws {
         guard ProcessInfo.processInfo.environment["LOKALHOST_TEST_LAUNCHD"] == "1" else {
             throw XCTSkip("Benötigt eine lokale macOS-GUI-Anmeldung mit launchd.")
