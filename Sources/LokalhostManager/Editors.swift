@@ -81,6 +81,14 @@ struct ServiceEditor: View {
                 LabeledContent("Aktive Bindungen", value: listener.bindings.map(\.description).joined(separator: "\n"))
             }
             if let directory = record.directory { LabeledContent("Arbeitsordner", value: directory) }
+            HStack {
+                TextField("Logdatei", text: Binding(get: { record.logPath ?? "" }, set: { record.logPath = $0.isEmpty ? nil : $0 }))
+                    .accessibilityLabel("Logdatei")
+                Button("Datei auswählen …") {
+                    let panel = NSOpenPanel()
+                    if panel.runModal() == .OK { record.logPath = panel.url?.path }
+                }
+            }
             VStack(alignment: .leading, spacing: 5) {
                 Text("Webziele").font(.headline)
                 Text("Pro Zeile eine lokale HTTP- oder HTTPS-Adresse mit aktivem Host-Port.").font(.callout).foregroundStyle(.secondary)
@@ -115,6 +123,11 @@ struct ServiceEditor: View {
             }
             var edited = record
             edited.name = record.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let path = edited.logPath {
+                let expanded = (path as NSString).expandingTildeInPath
+                guard expanded.hasPrefix("/") else { throw ManagerError("Bitte einen absoluten Pfad zur Logdatei angeben.") }
+                edited.logPath = expanded
+            }
             edited.webTargets = urls
             if let identity = row.listener?.identity { edited.lastIdentity = identity }
             var next = store.catalog
