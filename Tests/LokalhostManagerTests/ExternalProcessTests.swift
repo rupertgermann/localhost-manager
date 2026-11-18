@@ -27,9 +27,26 @@ final class ExternalProcessTests: XCTestCase {
         }
         XCTAssertTrue(replacement.process.isRunning)
     }
+    func testConfirmedProfileCannotRestartWhileExternalSupervisorSurvives() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let jobs = ManagedJobs(directory: directory)
+        let fixture = try ListenerFixture()
+        defer { fixture.close() }
+        let listeners = try await ListenerInventory.scan().listeners
+        let listener = try XCTUnwrap(listeners.first { $0.pid == fixture.process.processIdentifier })
+        let record = ServiceRecord(name: "Externer Test", directory: directory.path, startCommand: "touch started", lastIdentity: listener.identity)
+        do {
+            try await jobs.perform(.restart, row: ServiceRow(record: record, listener: listener))
+            XCTFail("Der externe Starter läuft noch.")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("Watcher"), error.localizedDescription) }
+        XCTAssertTrue(fixture.process.isRunning)
+        XCTAssertNil(try jobs.status(record.id))
+    }
+
 }
 
-private final class ListenerFixture {
+final class ListenerFixture {
     let process = Process()
     let port: Int
 

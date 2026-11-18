@@ -145,7 +145,11 @@ struct ServiceEditor: View {
                 edited.logPath = expanded
             }
             edited.webTargets = urls
-            if let identity = row.listener?.identity { edited.lastIdentity = identity }
+            if row.managed?.isRunning != true, let listener = row.listener, let identity = listener.identity {
+                edited.lastIdentity = identity
+                edited.externalPorts = Set(listener.bindings.map(\.port))
+                edited.externalSupervisor = try Predecessor.supervisor(of: identity)
+            }
             var next = store.catalog
             next.services.removeAll { $0.id == edited.id }
             next.services.append(edited)

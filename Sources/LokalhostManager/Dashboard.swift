@@ -138,10 +138,10 @@ struct Dashboard: View {
                     Text("PID \(listener.pid)").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                 }
             }.frame(minWidth: 95, maxWidth: .infinity, alignment: .leading)
-            let busy = row.record.map { store.starting.contains($0.id) } ?? false
+            let action = store.actions[row.id]
             let error = row.record.flatMap { store.managedErrors[$0.id] }
             let running = row.listener != nil || row.managed?.isRunning == true
-            let status = busy ? "Startet …" : error != nil ? "Unbekannt" : running ? "Läuft" : row.managed?.description ?? "Gestoppt"
+            let status = action?.rawValue ?? (error != nil ? "Unbekannt" : running ? "Läuft" : row.managed?.description ?? "Gestoppt")
             Label(status, systemImage: running ? "circle.fill" : "stop.circle")
                 .font(.callout).foregroundStyle(running ? Color.teal : Color.secondary).frame(width: 92, alignment: .leading).help(error ?? status)
             VStack(alignment: .leading, spacing: 2) {
@@ -155,15 +155,22 @@ struct Dashboard: View {
             } else if targets.count > 1 {
                 Menu("Öffnen") { ForEach(targets, id: \.self) { url in Button(url.absoluteString) { open(url) } } }.fixedSize()
             }
-            if let record = row.record, record.startCommand != nil, !running {
-                Button("Starten") { Task { await store.start(record) } }.disabled(busy || error != nil || !store.ready)
-            }
+            Group {
+                if running { Button("Stoppen") { Task { await store.perform(.stop, row: row) } } }
+                if row.record?.startCommand != nil {
+                    if !running {
+                        Button("Starten") { Task { await store.perform(.start, row: row) } }
+                    } else if row.managed?.isRunning == true || (row.listener?.identity != nil && row.listener?.identity == row.record?.lastIdentity) {
+                        Button("Neustarten") { Task { await store.perform(.restart, row: row) } }
+                    }
+                }
+            }.disabled(action != nil || error != nil || !store.ready)
             if let state = row.managed, state.isRunning || row.listener == nil {
                 ManagedLogsButton(name: row.name, run: state.run)
             } else {
                 ExternalServiceActions(row: row)
             }
-            Button("Bearbeiten") { editing = row }.disabled(!store.ready)
+            Button("Bearbeiten") { editing = row }.disabled(!store.ready || action != nil)
         }
     }
 

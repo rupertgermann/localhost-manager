@@ -1,16 +1,10 @@
 import SwiftUI
 
 struct ExternalServiceActions: View {
-    @EnvironmentObject var store: AppStore
     @State private var showingLogs = false
     let row: ServiceRow
 
     var body: some View {
-        if let listener = row.listener {
-            Button(store.stoppingExternal == row.id ? "Stoppt …" : "Stoppen") {
-                Task { await store.stopExternal(listener, row: row) }
-            }.disabled(store.stoppingExternal != nil)
-        }
         Button("Logs") { showingLogs = true }
             .sheet(isPresented: $showingLogs) { FileLogView(title: row.name, path: row.record?.logPath) }
     }

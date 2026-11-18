@@ -14,6 +14,7 @@ struct ManagedStatus {
     let loaded: Bool
     let exitCode: Int?
     var listeners: [LocalListener] = []
+    var observedPorts: Set<Int> = []
 
     var isRunning: Bool { identity != nil }
     var description: String {
@@ -36,6 +37,12 @@ struct ManagedStatus {
         }
         return false
     }
+}
+
+enum ServiceAction: String {
+    case start = "Startet …"
+    case stop = "Stoppt …"
+    case restart = "Startet neu …"
 }
 
 struct ManagedJobs {
@@ -71,7 +78,17 @@ struct ManagedJobs {
         let run = try JSONDecoder().decode(ManagedRun.self, from: bytes)
         guard run.serviceID == service else { throw ManagerError("Lauf gehört zu einem anderen Dienst.") }
         var state = try inspect(run)
-        if state.isRunning { state.listeners = listeners.filter(state.owns) }
+        let portsFile = runFolder(run).appendingPathComponent("ports.json")
+        do { state.observedPorts = try JSONDecoder().decode(Set<Int>.self, from: Data(contentsOf: portsFile)) }
+        catch let error as CocoaError where error.code == .fileReadNoSuchFile { }
+        if state.isRunning {
+            state.listeners = listeners.filter(state.owns)
+            let active = Set(state.listeners.flatMap(\.bindings).map(\.port))
+            if !active.isSubset(of: state.observedPorts) {
+                state.observedPorts.formUnion(active)
+                try JSONEncoder().encode(state.observedPorts).write(to: portsFile, options: .atomic)
+            }
+        }
         return state
     }
 
@@ -106,7 +123,94 @@ struct ManagedJobs {
         try JSONEncoder().encode(run).write(to: folder(run.serviceID).appendingPathComponent("current.json"), options: .atomic)
     }
 
-    func start(_ service: ServiceRecord) throws {
+    func perform(_ action: ServiceAction, row: ServiceRow) async throws {
+        guard let service = row.record else {
+            guard action == .stop, let listener = row.listener else { throw ManagerError("Kein bestätigtes Startprofil.") }
+            try await ExternalProcess.stop(listener)
+            return
+        }
+        let home = folder(service.id)
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let lock = open(home.appendingPathComponent("action.lock").path, O_CREAT | O_RDWR, 0o600)
+        guard lock >= 0 else { throw ManagerError("Aktionssperre konnte nicht geöffnet werden.") }
+        defer { close(lock) }
+        guard flock(lock, LOCK_EX | LOCK_NB) == 0 else { throw ManagerError("Eine Aktion für diesen Dienst läuft bereits.") }
+        let guardFile = home.appendingPathComponent("predecessor.json")
+        let listeners = try await ListenerInventory.scan().listeners
+        let state = try status(service.id, listeners: listeners)
+        let configuration = action == .stop ? nil : try configuration(for: service)
+        let predecessor: Predecessor
+        if action == .start {
+            guard state?.isRunning != true else { throw ManagerError("Dieser Dienst läuft bereits.") }
+            predecessor = try previousExecution(service, state, listeners, file: guardFile)
+        } else if let shown = row.managed, shown.isRunning {
+            predecessor = try await stopManaged(shown, current: state, listeners: listeners, file: guardFile)
+        } else {
+            guard state?.isRunning != true, let listener = row.listener, let identity = listener.identity,
+                  action == .stop || identity == service.lastIdentity else {
+                throw ManagerError("Die Identität ist unklar. Bitte den aktuellen Dienst erneut bestätigen.")
+            }
+            predecessor = try await stopExternal(listener, identity, restarting: action == .restart, file: guardFile)
+        }
+        try predecessor.checkEnded()
+        try predecessor.checkPorts(try await ListenerInventory.scan().listeners)
+        guard let configuration else { return }
+        if let state, state.loaded, !state.isRunning { try bootout(state.run) }
+        try launch(service.id, configuration)
+    }
+
+    private func previousExecution(_ service: ServiceRecord, _ state: ManagedStatus?, _ listeners: [LocalListener], file: URL) throws -> Predecessor {
+        var previous: Predecessor
+        do { previous = try JSONDecoder().decode(Predecessor.self, from: Data(contentsOf: file)) }
+        catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+            previous = Predecessor(processes: [], ports: [])
+        }
+        if let identity = service.lastIdentity { previous.processes.insert(identity) }
+        if let adopted = service.externalSupervisor, ProcessIdentity.read(adopted.pid) == adopted {
+            throw ManagerError("Der übergeordnete Starter oder Watcher läuft noch.")
+        }
+        previous.ports.formUnion(service.externalPorts ?? [])
+        previous.ports.formUnion(state?.observedPorts ?? [])
+        if let executable = service.executable, listeners.contains(where: {
+            $0.directory == service.directory && $0.executable == executable
+        }) { throw ManagerError("Im Projekt läuft ein passender externer Dienst. Bitte zuerst seine Identität bestätigen.") }
+        return previous
+    }
+
+    private func stopManaged(_ shown: ManagedStatus, current state: ManagedStatus?, listeners: [LocalListener], file: URL) async throws -> Predecessor {
+        guard let state, let root = state.identity, root == shown.identity, shown.run.id == state.run.id else {
+            throw ManagerError("Der angezeigte Lauf hat sich geändert.")
+        }
+        for listener in shown.listeners {
+            guard state.listeners.contains(where: { $0.identity == listener.identity && Set($0.bindings) == Set(listener.bindings) }) else {
+                throw ManagerError("Der Listener oder seine Bindungen haben sich geändert.")
+            }
+        }
+        let owned = Set(state.listeners.compactMap(\.identity))
+        var previous = Predecessor(processes: try Predecessor.tree(root).union(owned), ports: shown.observedPorts.union(state.observedPorts))
+        if getpgid(root.pid) == root.pid { previous.processGroup = root.pid }
+        try previous.checkPorts(listeners, excluding: owned)
+        try JSONEncoder().encode(previous).write(to: file, options: .atomic)
+        try bootout(state.run)
+        let deadline = ContinuousClock.now + .seconds(8)
+        while previous.hasLiveProcesses, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        guard !(try inspect(state.run)).loaded else { throw ManagerError("launchd hat den vorherigen Lauf noch nicht entfernt.") }
+        return previous
+    }
+
+    private func stopExternal(_ listener: LocalListener, _ identity: ProcessIdentity, restarting: Bool, file: URL) async throws -> Predecessor {
+        var previous = Predecessor(processes: try Predecessor.tree(identity), ports: Set(listener.bindings.map(\.port)),
+                                   supervisor: try Predecessor.supervisor(of: identity))
+        try JSONEncoder().encode(previous).write(to: file, options: .atomic)
+        if restarting { try previous.checkSupervisor() }
+        try await ExternalProcess.stop(listener)
+        if !restarting { previous.supervisor = nil }
+        return previous
+    }
+
+    private func configuration(for service: ServiceRecord) throws -> [String: Any] {
         guard let path = service.directory, path.hasPrefix("/"),
               let command = service.startCommand, !command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw ManagerError("Arbeitsordner und Startbefehl müssen bestätigt sein.")
@@ -124,27 +228,21 @@ struct ManagedJobs {
             env.merge(try ManagedEnvironment.parse(data)) { _, custom in custom }
         }
 
+        return ["ProgramArguments": ["/bin/sh", "-c", command], "WorkingDirectory": path,
+                "EnvironmentVariables": env, "RunAtLoad": false, "KeepAlive": false]
+    }
+
+    private func launch(_ service: UUID, _ configuration: [String: Any]) throws {
         let fm = FileManager.default
         let permissions: [FileAttributeKey: Any] = [.posixPermissions: 0o700]
-        let home = folder(service.id)
-        try fm.createDirectory(at: home, withIntermediateDirectories: true, attributes: permissions)
-        let lock = open(home.appendingPathComponent("action.lock").path, O_CREAT | O_RDWR, 0o600)
-        guard lock >= 0 else { throw ManagerError("Startsperre konnte nicht geöffnet werden.") }
-        defer { close(lock) }
-        guard flock(lock, LOCK_EX | LOCK_NB) == 0 else { throw ManagerError("Ein Start läuft bereits.") }
-        let previous = try status(service.id)
-        if let previous {
-            guard !previous.isRunning else { throw ManagerError("Dieser Dienst läuft bereits.") }
-            if previous.loaded { try bootout(previous.run) }
-        }
-        var run = ManagedRun(serviceID: service.id)
+        var run = ManagedRun(serviceID: service)
         let jobFolder = runFolder(run)
         try fm.createDirectory(at: jobFolder, withIntermediateDirectories: true, attributes: permissions)
         let plist = jobFolder.appendingPathComponent("job.plist")
-        let job: [String: Any] = ["Label": run.label, "ProgramArguments": ["/bin/sh", "-c", command],
-                                  "WorkingDirectory": path, "EnvironmentVariables": env,
-                                  "StandardOutPath": log(run, stderr: false).path, "StandardErrorPath": log(run, stderr: true).path,
-                                  "RunAtLoad": false, "KeepAlive": false]
+        var job = configuration
+        job["Label"] = run.label
+        job["StandardOutPath"] = log(run, stderr: false).path
+        job["StandardErrorPath"] = log(run, stderr: true).path
         try PropertyListSerialization.data(fromPropertyList: job, format: .xml, options: 0).write(to: plist, options: .atomic)
         defer { try? fm.removeItem(at: plist) }
         try save(run) // Write the label before launchd can start a process, including on app termination.

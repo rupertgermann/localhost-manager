@@ -7,13 +7,12 @@ final class AppStore: ObservableObject {
     @Published private(set) var inventory = ListenerInventory(listeners: [], warning: nil)
     @Published private(set) var refreshing = false
     @Published private(set) var ready = false
-    @Published private(set) var stoppingExternal: String?
     @Published var message: String?
     let dataDirectory: URL
     private var saving = false
     @Published private(set) var managed: [UUID: ManagedStatus] = [:]
     @Published private(set) var managedErrors: [UUID: String] = [:]
-    @Published private(set) var starting: Set<UUID> = []
+    @Published private(set) var actions: [String: ServiceAction] = [:]
     private var refreshRequested = false
 
     init() {
@@ -61,24 +60,14 @@ final class AppStore: ObservableObject {
         } while refreshRequested
     }
 
-    func start(_ service: ServiceRecord) async {
-        guard ready, starting.insert(service.id).inserted else { return }
-        defer { starting.remove(service.id) }
+    func perform(_ action: ServiceAction, row: ServiceRow) async {
+        guard ready, actions[row.id] == nil else { return }
+        actions[row.id] = action
+        defer { actions[row.id] = nil }
         message = nil
         let jobs = ManagedJobs(directory: dataDirectory)
-        do { try await Task.detached { try jobs.start(service) }.value }
-        catch { message = error.localizedDescription }
-        await refresh()
-    }
-
-    func stopExternal(_ listener: LocalListener, row: ServiceRow) async {
-        guard stoppingExternal == nil else { return }
-        stoppingExternal = row.id
-        defer { stoppingExternal = nil }
-        do {
-            try await ExternalProcess.stop(listener)
-            message = "\(row.name) wurde gestoppt."
-        } catch { message = "\(row.name): \(error.localizedDescription)" }
+        do { try await jobs.perform(action, row: row) }
+        catch { message = "\(row.name): \(error.localizedDescription)" }
         while refreshing {
             do { try await Task.sleep(for: .milliseconds(50)) } catch { return }
         }
