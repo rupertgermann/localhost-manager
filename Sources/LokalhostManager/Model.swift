@@ -45,7 +45,9 @@ struct Catalog: Codable {
     var projects: [Project] = []
     var services: [ServiceRecord] = []
 
-    private func project(for directory: String?) -> UUID? {
+    var docker: [DockerRecord]?
+
+    func project(for directory: String?) -> UUID? {
         guard let directory else { return nil }
         let candidates = projects.filter {
             directory == $0.directory || directory.hasPrefix($0.directory == "/" ? "/" : $0.directory + "/")
