@@ -44,7 +44,7 @@ final class ExternalProcessTests: XCTestCase {
         let inventory = try await ListenerInventory.scan()
         let target = try XCTUnwrap(inventory.listeners.first { $0.pid == first.process.processIdentifier })
         let watcher = Task.detached {
-            first.process.waitUntilExit()
+            try first.waitForExit()
             return try ListenerFixture(port: first.port)
         }
         do {
@@ -85,6 +85,7 @@ final class ExternalProcessTests: XCTestCase {
 final class ListenerFixture {
     let process = Process()
     let port: Int
+    private let exited = DispatchGroup()
 
     init(port: Int = 0, host: String = "127.0.0.1") throws {
         let output = Pipe()
@@ -96,6 +97,8 @@ final class ListenerFixture {
             """, String(port), host]
         process.environment = ["LC_ALL": "C"]
         process.standardOutput = output
+        exited.enter()
+        process.terminationHandler = { [exited] _ in exited.leave() }
         try process.run()
         self.port = try XCTUnwrap(Int(String(decoding: output.fileHandleForReading.availableData, as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)))
@@ -103,6 +106,12 @@ final class ListenerFixture {
 
     func close() {
         if process.isRunning { process.terminate() }
-        process.waitUntilExit()
+        XCTAssertNoThrow(try waitForExit())
+    }
+
+    func waitForExit() throws {
+        guard exited.wait(timeout: .now() + 5) == .success else {
+            throw ManagerError("Testprozess hat sich nicht innerhalb von fünf Sekunden beendet.")
+        }
     }
 }
