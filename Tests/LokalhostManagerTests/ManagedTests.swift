@@ -11,7 +11,7 @@ final class ManagedTests: XCTestCase {
         }
     }
 
-    func testMissingEnvAndMissingProgramHaveDistinctStartErrors() throws {
+    func testMissingEnvAndMissingProgramHaveDistinctStartErrors() async throws {
         guard ProcessInfo.processInfo.environment["LOKALHOST_TEST_LAUNCHD"] == "1" else {
             throw XCTSkip("Benötigt eine lokale macOS-GUI-Anmeldung mit launchd.")
         }
@@ -20,11 +20,17 @@ final class ManagedTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: folder) }
         let jobs = ManagedJobs(directory: folder)
         var record = ServiceRecord(name: "Fehlstart", directory: folder.path, startCommand: "./missing-program", envFile: "missing.env")
-        XCTAssertThrowsError(try jobs.start(record)) { XCTAssertTrue($0.localizedDescription.contains("missing.env")) }
+        do {
+            try await jobs.perform(.start, row: ServiceRow(record: record))
+            XCTFail("Start sollte fehlschlagen.")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("missing.env"), error.localizedDescription) }
         XCTAssertNil(try jobs.status(record.id))
         record.envFile = nil
         defer { if let state = try? jobs.status(record.id) { try? jobs.bootout(state.run) } }
-        XCTAssertThrowsError(try jobs.start(record)) { XCTAssertTrue($0.localizedDescription.contains("Programm nicht gefunden"), $0.localizedDescription) }
+        do {
+            try await jobs.perform(.start, row: ServiceRow(record: record))
+            XCTFail("Start sollte fehlschlagen.")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("Programm nicht gefunden"), error.localizedDescription) }
         XCTAssertEqual(try jobs.status(record.id)?.exitCode, 127)
     }
 
@@ -140,6 +146,32 @@ final class ManagedTests: XCTestCase {
         defer { _ = try? jobs.bootout(after.run) }
         XCTAssertEqual(after.identity, state.identity)
         XCTAssertTrue(replacement.process.isRunning)
+    }
+
+    func testConfirmedStandaloneListenerCanRestartAsManagedService() async throws {
+        guard ProcessInfo.processInfo.environment["LOKALHOST_TEST_LAUNCHD"] == "1" else {
+            throw XCTSkip("Benötigt eine lokale macOS-GUI-Anmeldung mit launchd.")
+        }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let jobs = ManagedJobs(directory: directory)
+        let command = #"exec /usr/bin/perl -MIO::Socket::INET -e 'my $s=IO::Socket::INET->new(LocalAddr=>"127.0.0.1",LocalPort=>0,Listen=>1) or die; sleep 90'"#
+        let original = ServiceRecord(name: "Terminalersatz", directory: directory.path, startCommand: command)
+        try await jobs.perform(.start, row: ServiceRow(record: original))
+        let listeners = try await ListenerInventory.scan().listeners
+        let oldRun = try XCTUnwrap(try jobs.status(original.id, listeners: listeners))
+        defer { try? jobs.bootout(oldRun.run) }
+        let external = try XCTUnwrap(oldRun.listeners.first)
+        let confirmed = ServiceRecord(name: "Übernommen", directory: directory.path, startCommand: command, lastIdentity: external.identity)
+        try await jobs.perform(.restart, row: ServiceRow(record: confirmed, listener: external))
+        let fresh = try await ListenerInventory.scan().listeners
+        let own = try XCTUnwrap(try jobs.status(confirmed.id, listeners: fresh))
+        defer { try? jobs.bootout(own.run) }
+        XCTAssertTrue(own.isRunning)
+        XCTAssertEqual(own.listeners.count, 1)
+        XCTAssertNil(ProcessIdentity.read(external.pid))
+        try await jobs.perform(.stop, row: ServiceRow(record: confirmed, managed: own))
     }
 
 }
