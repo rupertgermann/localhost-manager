@@ -14,7 +14,7 @@ struct ManagedStatus {
     let loaded: Bool
     let exitCode: Int?
     var listeners: [LocalListener] = []
-    var observedPorts: Set<Int> = []
+    var observedBindings: Set<HostBinding> = []
 
     var isRunning: Bool { identity != nil }
     var description: String {
@@ -79,14 +79,14 @@ struct ManagedJobs {
         guard run.serviceID == service else { throw ManagerError("Lauf gehört zu einem anderen Dienst.") }
         var state = try inspect(run)
         let portsFile = runFolder(run).appendingPathComponent("ports.json")
-        do { state.observedPorts = try JSONDecoder().decode(Set<Int>.self, from: Data(contentsOf: portsFile)) }
+        do { state.observedBindings = try JSONDecoder().decode(Set<HostBinding>.self, from: Data(contentsOf: portsFile)) }
         catch let error as CocoaError where error.code == .fileReadNoSuchFile { }
         if state.isRunning {
             state.listeners = listeners.filter(state.owns)
-            let active = Set(state.listeners.flatMap(\.bindings).map(\.port))
-            if !active.isSubset(of: state.observedPorts) {
-                state.observedPorts.formUnion(active)
-                try JSONEncoder().encode(state.observedPorts).write(to: portsFile, options: .atomic)
+            let active = Set(state.listeners.flatMap(\.bindings))
+            if !active.isSubset(of: state.observedBindings) {
+                state.observedBindings.formUnion(active)
+                try JSONEncoder().encode(state.observedBindings).write(to: portsFile, options: .atomic)
             }
         }
         return state
@@ -123,7 +123,8 @@ struct ManagedJobs {
         try JSONEncoder().encode(run).write(to: folder(run.serviceID).appendingPathComponent("current.json"), options: .atomic)
     }
 
-    func perform(_ action: ServiceAction, row: ServiceRow) async throws {
+    func perform(_ action: ServiceAction, row: ServiceRow, services: [ServiceRecord] = []) async throws {
+        if let error = row.controlError { throw ManagerError(error) }
         guard let service = row.record else {
             guard action == .stop, let listener = row.listener else { throw ManagerError("Kein bestätigtes Startprofil.") }
             try await ExternalProcess.stop(listener)
@@ -136,13 +137,13 @@ struct ManagedJobs {
         defer { close(lock) }
         guard flock(lock, LOCK_EX | LOCK_NB) == 0 else { throw ManagerError("Eine Aktion für diesen Dienst läuft bereits.") }
         let guardFile = home.appendingPathComponent("predecessor.json")
-        let listeners = try await ListenerInventory.scan().listeners
+        let listeners = try await ListenerInventory.currentListeners()
         let state = try status(service.id, listeners: listeners)
         let configuration = action == .stop ? nil : try configuration(for: service)
         let predecessor: Predecessor
         if action == .start {
             guard state?.isRunning != true else { throw ManagerError("Dieser Dienst läuft bereits.") }
-            predecessor = try previousExecution(service, state, listeners, file: guardFile)
+            predecessor = try previousExecution(service, state, listeners, services: services, file: guardFile)
         } else if let shown = row.managed, shown.isRunning {
             predecessor = try await stopManaged(shown, current: state, listeners: listeners, file: guardFile)
         } else {
@@ -153,13 +154,13 @@ struct ManagedJobs {
             predecessor = try await stopExternal(listener, identity, restarting: action == .restart, file: guardFile)
         }
         try predecessor.checkEnded()
-        try predecessor.checkPorts(try await ListenerInventory.scan().listeners)
+        try predecessor.checkPorts(try await ListenerInventory.currentListeners())
         guard let configuration else { return }
         if let state, state.loaded, !state.isRunning { try bootout(state.run) }
         try launch(service.id, configuration)
     }
 
-    private func previousExecution(_ service: ServiceRecord, _ state: ManagedStatus?, _ listeners: [LocalListener], file: URL) throws -> Predecessor {
+    private func previousExecution(_ service: ServiceRecord, _ state: ManagedStatus?, _ listeners: [LocalListener], services: [ServiceRecord], file: URL) throws -> Predecessor {
         var previous: Predecessor
         do { previous = try JSONDecoder().decode(Predecessor.self, from: Data(contentsOf: file)) }
         catch let error as CocoaError where error.code == .fileReadNoSuchFile {
@@ -170,10 +171,24 @@ struct ManagedJobs {
             throw ManagerError("Der übergeordnete Starter oder Watcher läuft noch.")
         }
         previous.ports.formUnion(service.externalPorts ?? [])
-        previous.ports.formUnion(state?.observedPorts ?? [])
-        if let executable = service.executable, listeners.contains(where: {
-            $0.directory == service.directory && $0.executable == executable
-        }) { throw ManagerError("Im Projekt läuft ein passender externer Dienst. Bitte zuerst seine Identität bestätigen.") }
+        previous.ports.formUnion(state?.observedBindings ?? [])
+        if let executable = service.executable {
+            var candidates = listeners.filter {
+                ($0.directory == service.directory && ($0.executable == nil || $0.executable == executable)) ||
+                ($0.directory == nil && $0.executable == executable)
+            }
+            for other in services where other.id != service.id && !candidates.isEmpty {
+                let run = try status(other.id)
+                candidates.removeAll { listener in
+                    if run?.owns(listener) == true { return true }
+                    guard let identity = listener.identity, identity == other.lastIdentity else { return false }
+                    return ProcessIdentity.read(identity.pid) == identity
+                }
+            }
+            if !candidates.isEmpty {
+                throw ManagerError("Im Projekt läuft ein passender externer Dienst. Bitte zuerst seine Identität bestätigen.")
+            }
+        }
         return previous
     }
 
@@ -181,13 +196,16 @@ struct ManagedJobs {
         guard let state, let root = state.identity, root == shown.identity, shown.run.id == state.run.id else {
             throw ManagerError("Der angezeigte Lauf hat sich geändert.")
         }
+        if state.listeners.contains(where: { LocalListener.isDockerForwarder($0.executable) }) {
+            throw ManagerError(LocalListener.dockerControlError)
+        }
         for listener in shown.listeners {
             guard state.listeners.contains(where: { $0.identity == listener.identity && Set($0.bindings) == Set(listener.bindings) }) else {
                 throw ManagerError("Der Listener oder seine Bindungen haben sich geändert.")
             }
         }
         let owned = Set(state.listeners.compactMap(\.identity))
-        var previous = Predecessor(processes: try Predecessor.tree(root).union(owned), ports: shown.observedPorts.union(state.observedPorts))
+        var previous = Predecessor(processes: try Predecessor.tree(root).union(owned), ports: shown.observedBindings.union(state.observedBindings))
         if getpgid(root.pid) == root.pid { previous.processGroup = root.pid }
         try previous.checkPorts(listeners, excluding: owned)
         try JSONEncoder().encode(previous).write(to: file, options: .atomic)
@@ -201,7 +219,7 @@ struct ManagedJobs {
     }
 
     private func stopExternal(_ listener: LocalListener, _ identity: ProcessIdentity, restarting: Bool, file: URL) async throws -> Predecessor {
-        var previous = Predecessor(processes: try Predecessor.tree(identity), ports: Set(listener.bindings.map(\.port)),
+        var previous = Predecessor(processes: try Predecessor.tree(identity), ports: Set(listener.bindings),
                                    supervisor: try Predecessor.supervisor(of: identity))
         try JSONEncoder().encode(previous).write(to: file, options: .atomic)
         if restarting { try previous.checkSupervisor() }

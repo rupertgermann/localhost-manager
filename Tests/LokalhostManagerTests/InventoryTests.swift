@@ -3,6 +3,51 @@ import XCTest
 @testable import LokalhostManager
 
 final class InventoryTests: XCTestCase {
+    @MainActor
+    func testFailedInventoryRetainsRowsBlocksActionsAndRecoversToConfirmedEmpty() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = AppStore(dataDirectory: directory)
+        await store.load()
+        let marker = directory.appendingPathComponent("started")
+        let service = ServiceRecord(name: "API", directory: directory.path, startCommand: "touch started")
+        try await store.save(Catalog(services: [service]))
+        let listener = LocalListener(pid: 42, name: "Test")
+        await store.refresh { ListenerInventory(listeners: [listener], warning: nil) }
+        await store.refresh { throw ManagerError("lsof fehlgeschlagen") }
+        XCTAssertEqual(store.inventory.listeners.map(\.pid), [42])
+        XCTAssertEqual(store.inventory.visibility, .unavailable)
+        await store.perform(.start, row: ServiceRow(record: service))
+        XCTAssertTrue(store.message?.contains("lsof") == true)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path))
+        await store.refresh { ListenerInventory(listeners: [listener], warning: "Eingeschränkt", visibility: .partial) }
+        XCTAssertEqual(store.inventory.visibility, .partial)
+        XCTAssertEqual(store.inventory.listeners.count, 1)
+        XCTAssertThrowsError(try store.inventory.requireCurrent())
+        await store.refresh { ListenerInventory(listeners: [], warning: nil) }
+        XCTAssertTrue(store.inventory.listeners.isEmpty)
+        XCTAssertEqual(store.inventory.visibility, .current)
+    }
+
+    func testPortConflictsUseAddressesFamiliesAndLegacySnapshots() throws {
+        let loopback = HostBinding(family: "IPv4", host: "127.0.0.1", port: 8090)
+        func owner(_ family: String, _ host: String) -> LocalListener {
+            LocalListener(pid: 42, name: "Listener", bindings: [HostBinding(family: family, host: host, port: 8090)])
+        }
+        let previous = Predecessor(processes: [], ports: [loopback])
+        XCTAssertNoThrow(try previous.checkPorts([owner("IPv4", "127.0.0.2"), owner("IPv6", "[::1]")]))
+        XCTAssertThrowsError(try previous.checkPorts([owner("IPv6", "::")]))
+        XCTAssertThrowsError(try previous.checkPorts([owner("IPv6", "::ffff:127.0.0.1")]))
+        XCTAssertThrowsError(try previous.checkPorts([owner("IPv4", "*")]))
+        XCTAssertThrowsError(try previous.checkPorts([owner("IPv4", "0.0.0.0")]))
+        let v6 = Predecessor(processes: [], ports: [HostBinding(family: "IPv6", host: "[::1]", port: 8090)])
+        XCTAssertThrowsError(try v6.checkPorts([owner("IPv6", "::")]))
+        XCTAssertThrowsError(try v6.checkPorts([owner("IPv6", "0:0:0:0:0:0:0:1")]))
+        let legacy = try JSONDecoder().decode(Predecessor.self, from: Data(#"{"processes":[],"ports":[8090]}"#.utf8))
+        XCTAssertThrowsError(try legacy.checkPorts([owner("IPv6", "::1")]))
+        XCTAssertThrowsError(try legacy.checkPorts([owner("IPv4", "127.0.0.2")]))
+    }
+
     func testTwoLoopbackListenersBelongToOneProcess() async throws {
         var ports = Set<Int>()
         var descriptors: [Int32] = []

@@ -49,7 +49,7 @@ struct DockerRow: Identifiable {
     var webTargets: [URL] {
         guard let current, current.state == "running" else { return [] }
         let bindings = current.ports.filter { $0.destination.hasSuffix("/tcp") }.map(\.host)
-        return Set(current.webTargets + editableRecord.webTargets.filter { WebTarget.accepts($0, on: bindings) }).sorted { $0.absoluteString < $1.absoluteString }
+        return editableRecord.webTargets.filter { WebTarget.accepts($0, on: bindings) }.sorted { $0.absoluteString < $1.absoluteString }
     }
 }
 
@@ -65,7 +65,7 @@ struct DockerInventory {
             owners[port.host, default: 0] += 1
         }
         return listeners.compactMap { listener in
-            guard listener.executable == "/Applications/Docker.app/Contents/MacOS/com.docker.backend" else { return listener }
+            guard LocalListener.isDockerForwarder(listener.executable) else { return listener }
             var filtered = listener
             filtered.bindings.removeAll { binding in
                 var host = binding
@@ -84,13 +84,17 @@ struct DockerInventory {
         var rows: [DockerRow] = []
         for container in containers {
             // Compose can temporarily present two containers for a replica during recreation.
-            let key = instances[container.key]?.count == 1 ? container.key : .container(container.id)
+            let exact = DockerKey.container(container.id)
+            let unique = instances[container.key]?.count == 1
+            let useExact = stored.contains { $0.key == exact } || !unique
+            let key = useExact ? exact : container.key
             let saved = stored.first { $0.key == key }
-            guard showStopped || saved != nil || ["running", "restarting", "paused"].contains(container.state) else { continue }
+            guard showStopped || saved != nil || DockerContainer.isActive(container.state) else { continue }
             let record = DockerRecord(socket: socket, key: key, name: container.name, instance: container.instanceDescription,
                                       composeProject: container.project, directory: container.workingDirectory,
                                       projectID: saved?.projectID, webTargets: saved?.webTargets ?? [])
             seen.insert(key)
+            if unique { seen.insert(container.key) }
             rows.append(DockerRow(editableRecord: record, container: container, available: available,
                                   projectID: record.projectID ?? catalog.project(for: record.directory)))
         }
@@ -116,7 +120,7 @@ enum DockerAction: String, CaseIterable {
     func accepts(_ state: String) -> Bool {
         switch self {
         case .start: return ["created", "exited"].contains(state)
-        case .stop, .restart: return ["running", "restarting", "paused"].contains(state)
+        case .stop, .restart: return DockerContainer.isActive(state)
         }
     }
 }

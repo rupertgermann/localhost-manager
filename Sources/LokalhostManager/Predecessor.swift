@@ -4,13 +4,13 @@ import Foundation
 /// Identities observed before stopping survive a manager quit in the middle of a restart.
 struct Predecessor: Codable {
     var processes: Set<ProcessIdentity>
-    var ports: Set<Int>
+    var ports: Set<HostBinding>
     var supervisor: ProcessIdentity?
     var processGroup: pid_t?
 
     func checkPorts(_ listeners: [LocalListener], excluding owned: Set<ProcessIdentity> = []) throws {
         for listener in listeners where listener.identity.map(owned.contains) != true {
-            if let binding = listener.bindings.first(where: { ports.contains($0.port) }) {
+            if let binding = listener.bindings.first(where: { binding in ports.contains(where: binding.overlaps) }) {
                 throw ManagerError("Port \(binding.port) weiterhin belegt durch \(listener.name) (PID \(listener.pid)).")
             }
         }

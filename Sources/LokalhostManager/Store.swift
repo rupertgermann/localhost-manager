@@ -4,7 +4,7 @@ import SwiftUI
 @MainActor
 final class AppStore: ObservableObject {
     @Published private(set) var catalog = Catalog()
-    @Published private(set) var inventory = ListenerInventory(listeners: [], warning: nil)
+    @Published private(set) var inventory = ListenerInventory(listeners: [], warning: nil, visibility: .unavailable)
     @Published private(set) var refreshing = false
     @Published private(set) var ready = false
     @Published var message: String?
@@ -15,12 +15,13 @@ final class AppStore: ObservableObject {
     @Published private(set) var actions: [String: ServiceAction] = [:]
     private var refreshRequested = false
 
-    init() {
+    init(dataDirectory: URL? = nil) {
         let environment = ProcessInfo.processInfo.environment
-        if let path = environment["LOKALHOST_DATA_DIR"], !path.isEmpty {
-            dataDirectory = URL(fileURLWithPath: path, isDirectory: true)
+        if let dataDirectory { self.dataDirectory = dataDirectory }
+        else if let path = environment["LOKALHOST_DATA_DIR"], !path.isEmpty {
+            self.dataDirectory = URL(fileURLWithPath: path, isDirectory: true)
         } else {
-            dataDirectory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            self.dataDirectory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
                 .appendingPathComponent("Lokalhost Manager", isDirectory: true)
         }
     }
@@ -38,15 +39,18 @@ final class AppStore: ObservableObject {
         await refresh()
     }
 
-    func refresh() async {
+    func refresh(scan: () async throws -> ListenerInventory = ListenerInventory.scan) async {
         guard !refreshing else { refreshRequested = true; return }
         refreshing = true
         defer { refreshing = false }
         repeat {
             refreshRequested = false
             let snapshot: ListenerInventory
-            do { snapshot = try await ListenerInventory.scan() }
-            catch { snapshot = ListenerInventory(listeners: [], warning: error.localizedDescription) }
+            do { snapshot = try await scan() }
+            catch {
+                inventory = ListenerInventory(listeners: inventory.listeners, warning: error.localizedDescription, visibility: .unavailable)
+                continue
+            }
             let jobs = ManagedJobs(directory: dataDirectory), services = catalog.services, listeners = snapshot.listeners
             (managed, managedErrors) = await Task.detached {
                 var states: [UUID: ManagedStatus] = [:], errors: [UUID: String] = [:]
@@ -62,11 +66,14 @@ final class AppStore: ObservableObject {
 
     func perform(_ action: ServiceAction, row: ServiceRow) async {
         guard ready, actions[row.id] == nil else { return }
+        do { try inventory.requireCurrent() }
+        catch { message = error.localizedDescription; return }
+        if let error = row.controlError { message = error; return }
         actions[row.id] = action
         defer { actions[row.id] = nil }
         message = nil
         let jobs = ManagedJobs(directory: dataDirectory)
-        do { try await jobs.perform(action, row: row) }
+        do { try await jobs.perform(action, row: row, services: catalog.services) }
         catch { message = "\(row.name): \(error.localizedDescription)" }
         while refreshing {
             do { try await Task.sleep(for: .milliseconds(50)) } catch { return }

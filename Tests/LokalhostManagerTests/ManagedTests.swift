@@ -116,6 +116,36 @@ final class ManagedTests: XCTestCase {
         XCTAssertEqual(try reopened.status(record.id)?.run.id, next.run.id)
         XCTAssertTrue(try String(contentsOf: reopened.log(state.run, stderr: true)).contains("after reopen"))
     }
+    func testTwoProfilesWithSameExecutableAndFolderCanRunIndependently() async throws {
+        guard ProcessInfo.processInfo.environment["LOKALHOST_TEST_LAUNCHD"] == "1" else {
+            throw XCTSkip("Benötigt launchd.")
+        }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let directory = physicalDirectory(folder.deletingLastPathComponent().path) + "/" + folder.lastPathComponent
+        let jobs = ManagedJobs(directory: folder)
+        let command = #"exec /usr/bin/perl -MIO::Socket::INET -e 'my $s=IO::Socket::INET->new(LocalAddr=>"127.0.0.1",LocalPort=>0,Listen=>1) or die; sleep 60'"#
+        let first = ServiceRecord(name: "Frontend", directory: directory, startCommand: command)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try await jobs.perform(.start, row: ServiceRow(record: first))
+        defer { if let state = try? jobs.status(first.id) { try? jobs.bootout(state.run) } }
+        let listeners = try await ListenerInventory.scan().listeners
+        let state = try XCTUnwrap(try jobs.status(first.id, listeners: listeners))
+        let executable = try XCTUnwrap(state.listeners.first?.executable)
+        let second = ServiceRecord(name: "API", directory: directory, startCommand: command, executable: executable)
+        do {
+            try await jobs.perform(.start, row: ServiceRow(record: second))
+            XCTFail("Ein nicht zugeordneter passender Prozess muss den Start blockieren.")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("externer Dienst"), error.localizedDescription) }
+        try await jobs.perform(.start, row: ServiceRow(record: second), services: [first, second])
+        defer { if let state = try? jobs.status(second.id) { try? jobs.bootout(state.run) } }
+        let fresh = try await ListenerInventory.scan().listeners
+        let api = try XCTUnwrap(try jobs.status(second.id, listeners: fresh))
+        XCTAssertEqual(api.listeners.count, 1)
+        XCTAssertNotEqual(try XCTUnwrap(api.identity), state.identity)
+        try await jobs.perform(.stop, row: ServiceRow(record: second, managed: api))
+        XCTAssertEqual(try jobs.status(first.id)?.identity, state.identity)
+    }
+
     func testRefreshedRowRefusesRestartWhenChildPortWasTakenOver() async throws {
         guard ProcessInfo.processInfo.environment["LOKALHOST_TEST_LAUNCHD"] == "1" else {
             throw XCTSkip("Benötigt eine lokale macOS-GUI-Anmeldung mit launchd.")

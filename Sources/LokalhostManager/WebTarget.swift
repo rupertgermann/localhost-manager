@@ -2,6 +2,19 @@ import Darwin
 import Foundation
 
 enum WebTarget {
+    static func confirmed(_ text: String, existing: [URL], bindings: [HostBinding]) throws -> [URL] {
+        var urls: [URL] = []
+        for line in text.split(whereSeparator: \.isNewline) {
+            let address = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if address.isEmpty { continue }
+            guard let url = URL(string: address), existing.contains(url) || accepts(url, on: bindings) else {
+                throw ManagerError("Webziel benötigt eine lokale HTTP(S)-Adresse mit einem aktiven Host-Port.")
+            }
+            if !urls.contains(url) { urls.append(url) }
+        }
+        return urls
+    }
+
     static func accepts(_ url: URL, on bindings: [HostBinding]) -> Bool {
         guard let parts = URLComponents(url: url, resolvingAgainstBaseURL: false),
               let scheme = parts.scheme?.lowercased(), ["http", "https"].contains(scheme),
