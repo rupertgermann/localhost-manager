@@ -2,6 +2,30 @@ import XCTest
 @testable import LokalhostManager
 
 final class CatalogTests: XCTestCase {
+    func testExistingProjectAndServiceUseTheSamePhysicalDirectoryAsTheListener() throws {
+        let name = "lokalhost-path-" + UUID().uuidString
+        let folder = URL(fileURLWithPath: "/private/tmp/" + name)
+        let child = folder.appendingPathComponent("Frontend")
+        let alias = "/tmp/" + name
+        try FileManager.default.createDirectory(at: child, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+
+        let project = Project(name: "Website", directory: alias)
+        let saved = ServiceRecord(name: "Gespeichertes Frontend", directory: alias + "/Frontend", executable: "/bin/node")
+        let container = DockerRecord(socket: "/local.sock", key: .container("test"), name: "db",
+                                     instance: "db", directory: alias)
+        let old = Catalog(projects: [project], services: [saved], docker: [container])
+        let file = folder.appendingPathComponent("catalog.json")
+        try JSONEncoder().encode(old).write(to: file)
+        let catalog = try Catalog.read(from: file)
+        let listener = LocalListener(pid: 42, name: "node", directory: child.path, executable: "/bin/node")
+        let rows = catalog.rows(for: [listener])
+        XCTAssertEqual(rows.count, 1)
+        XCTAssertEqual(rows.first?.record?.id, saved.id)
+        XCTAssertEqual(rows.first?.projectID, project.id)
+        XCTAssertEqual(catalog.docker?.first?.directory, folder.path)
+    }
+
     func testManualAssignmentSurvivesRefreshAndDoesNotClaimAnotherServiceSharingItsPort() throws {
         let project = Project(name: "Website", directory: "/work/site")
         let alternate = Project(name: "Werkzeuge", directory: "/tools")

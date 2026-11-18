@@ -36,7 +36,7 @@ struct DockerContainer: Decodable, Identifiable {
         project = try label(.project)
         service = try label(.service)
         number = try label(.number)
-        workingDirectory = try label(.workingDirectory)
+        workingDirectory = try label(.workingDirectory).map(physicalDirectory)
         oneoff = try label(.oneoff)?.lowercased() == "true"
         let published = try data.decodeIfPresent([String: [Address]?].self, forKey: .ports) ?? [:]
         var ports = Set<DockerPort>()

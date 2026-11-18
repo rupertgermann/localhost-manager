@@ -43,7 +43,7 @@ struct ProjectEditor: View {
                 guard path.hasPrefix("/"), FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue else {
                     throw ManagerError("Bitte einen vorhandenen Projektordner wählen.")
                 }
-                return URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
+                return physicalDirectory(path)
             }.value
             var next = store.catalog
             next.projects.append(Project(name: name.trimmingCharacters(in: .whitespacesAndNewlines), directory: folder))
@@ -132,7 +132,9 @@ struct ServiceEditor: View {
             }
             var edited = record
             edited.name = record.name.trimmingCharacters(in: .whitespacesAndNewlines)
-            if let path = edited.directory { edited.directory = (path as NSString).expandingTildeInPath }
+            if let path = edited.directory {
+                edited.directory = await Task.detached { physicalDirectory((path as NSString).expandingTildeInPath) }.value
+            }
             if let path = edited.envFile { edited.envFile = (path as NSString).expandingTildeInPath }
             if edited.startCommand != nil, edited.directory?.hasPrefix("/") != true {
                 throw ManagerError("Ein Startprofil benötigt einen absoluten Arbeitsordner.")
