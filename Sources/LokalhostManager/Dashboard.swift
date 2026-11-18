@@ -9,7 +9,7 @@ struct Dashboard: View {
     @State private var editing: ServiceRow?
 
     var body: some View {
-        let rows = store.catalog.rows(for: store.inventory.listeners).filter(matches)
+        let rows = store.catalog.rows(for: store.inventory.listeners, managed: store.managed).filter(matches)
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .center, spacing: 16) {
                 Image(systemName: "server.rack").font(.system(size: 27, weight: .medium))
@@ -37,7 +37,7 @@ struct Dashboard: View {
                 VStack(alignment: .leading, spacing: 15) {
                     ForEach(store.catalog.projects) { project in
                         let services = rows.filter { $0.projectID == project.id }
-                        if !services.isEmpty || filter.isEmpty { group(project.name, rows: services) }
+                        if !services.isEmpty || filter.isEmpty { group(project.name, rows: services, project: project) }
                     }
                     let unassigned = rows.filter { $0.projectID == nil }
                     if !unassigned.isEmpty { group("Unzugeordnet", rows: unassigned) }
@@ -71,16 +71,22 @@ struct Dashboard: View {
     private func matches(_ row: ServiceRow) -> Bool {
         if !systemServices && row.listener?.isSystem == true { return false }
         if filter.isEmpty { return true }
-        let text = [row.name, row.listener?.directory ?? "", row.listener?.pid.description ?? ""] + (row.listener?.bindings.map(\.description) ?? [])
+        let text = [row.name, row.listener?.directory ?? "", row.listener?.pid.description ?? ""] + row.bindings.map(\.description)
         return text.contains { $0.localizedCaseInsensitiveContains(filter) }
     }
 
-    private func group(_ title: String, rows: [ServiceRow]) -> some View {
+    private func group(_ title: String, rows: [ServiceRow], project: Project? = nil) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Label(title, systemImage: "folder").font(.headline)
                 Spacer()
                 Text("\(rows.count)").foregroundStyle(.secondary).monospacedDigit()
+                if let project {
+                    Button("Dienst anlegen") {
+                        let record = ServiceRecord(name: "", projectID: project.id, directory: project.directory)
+                        editing = ServiceRow(record: record, projectID: project.id)
+                    }.disabled(!store.ready)
+                }
             }.padding(.horizontal, 12).padding(.vertical, 10)
             Divider()
             if rows.isEmpty { Text("Keine Dienste").foregroundStyle(.secondary).padding(12) }
@@ -100,20 +106,31 @@ struct Dashboard: View {
                     Text("PID \(listener.pid)").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                 }
             }.frame(minWidth: 95, maxWidth: .infinity, alignment: .leading)
-            Label(row.listener == nil ? "Gestoppt" : "Läuft", systemImage: row.listener == nil ? "stop.circle" : "circle.fill")
-                .font(.callout).foregroundStyle(row.listener == nil ? Color.secondary : Color.teal).frame(width: 84, alignment: .leading)
+            let busy = row.record.map { store.starting.contains($0.id) } ?? false
+            let error = row.record.flatMap { store.managedErrors[$0.id] }
+            let running = row.listener != nil || row.managed?.isRunning == true
+            let status = busy ? "Startet …" : error != nil ? "Unbekannt" : running ? "Läuft" : row.managed?.description ?? "Gestoppt"
+            Label(status, systemImage: running ? "circle.fill" : "stop.circle")
+                .font(.callout).foregroundStyle(running ? Color.teal : Color.secondary).frame(width: 92, alignment: .leading).help(error ?? status)
             VStack(alignment: .leading, spacing: 2) {
-                if let listener = row.listener {
-                    ForEach(listener.bindings, id: \.self) { Text($0.description).font(.system(.caption, design: .monospaced)) }
+                if !row.bindings.isEmpty {
+                    ForEach(row.bindings, id: \.self) { Text($0.description).font(.system(.caption, design: .monospaced)) }
                 } else { Text("—").foregroundStyle(.secondary) }
             }.frame(minWidth: 140, maxWidth: .infinity, alignment: .leading)
-            let targets = (row.record?.webTargets ?? []).filter { WebTarget.accepts($0, on: row.listener?.bindings ?? []) }
+            let targets = (row.record?.webTargets ?? []).filter { WebTarget.accepts($0, on: row.bindings) }
             if targets.count == 1 {
                 Button("Öffnen") { open(targets[0]) }
             } else if targets.count > 1 {
                 Menu("Öffnen") { ForEach(targets, id: \.self) { url in Button(url.absoluteString) { open(url) } } }.fixedSize()
             }
-            ExternalServiceActions(row: row)
+            if let record = row.record, record.startCommand != nil, !running {
+                Button("Starten") { Task { await store.start(record) } }.disabled(busy || error != nil || !store.ready)
+            }
+            if let state = row.managed, state.isRunning || row.listener == nil {
+                ManagedLogsButton(name: row.name, run: state.run)
+            } else {
+                ExternalServiceActions(row: row)
+            }
             Button("Bearbeiten") { editing = row }.disabled(!store.ready)
         }
     }
