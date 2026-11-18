@@ -102,17 +102,69 @@ struct DockerInventory {
     }
 }
 
+enum DockerAction: String, CaseIterable {
+    case start, stop, restart
+
+    var title: String {
+        switch self {
+        case .start: return "Starten"
+        case .stop: return "Stoppen"
+        case .restart: return "Neu starten"
+        }
+    }
+
+    func accepts(_ state: String) -> Bool {
+        switch self {
+        case .start: return ["created", "exited"].contains(state)
+        case .stop, .restart: return ["running", "restarting", "paused"].contains(state)
+        }
+    }
+}
+
 @MainActor
 final class DockerStore: ObservableObject {
-    let cli = DockerCLI()
+    let cli: DockerCLI
     @Published private(set) var inventory = DockerInventory()
+    @Published private(set) var busy = Set<String>()
     private var refreshing = false
+    private var generation = 0
 
-    func refresh() async {
-        guard !refreshing else { return }
+    init(cli: DockerCLI = DockerCLI()) { self.cli = cli }
+
+    func refresh(afterAction: Bool = false) async {
+        guard afterAction || !refreshing else { return }
+        generation += 1
+        let request = generation
         refreshing = true
-        defer { refreshing = false }
-        do { inventory = DockerInventory(containers: try await cli.scan(), available: true) }
-        catch { inventory = DockerInventory(containers: inventory.containers, available: false, error: error.localizedDescription) }
+        defer { if request == generation { refreshing = false } }
+        do {
+            let containers = try await cli.scan()
+            if request == generation { inventory = DockerInventory(containers: containers, available: true) }
+        } catch {
+            if request == generation {
+                inventory = DockerInventory(containers: inventory.containers, available: false, error: error.localizedDescription)
+            }
+        }
+    }
+
+    func perform(_ action: DockerAction, on row: DockerRow) async throws {
+        guard inventory.available, row.editableRecord.socket == cli.socket, let target = row.current,
+              inventory.containers.contains(where: { $0.id == target.id }) else {
+            throw ManagerError("Container nicht verfügbar. Bestand aktualisieren.")
+        }
+        guard busy.insert(target.id).inserted else { throw ManagerError("Für diesen Container läuft bereits eine Aktion.") }
+        defer { busy.remove(target.id) }
+        do {
+            guard DockerCLI.isFullID(target.id),
+                  let current = try await cli.inspect([target.id]).first,
+                  inventory.available, current.id == target.id, action.accepts(current.state) else {
+                throw ManagerError("Die gewählte Containerinstanz oder ihr Zustand hat sich geändert.")
+            }
+            _ = try await cli.run(["container", action.rawValue, target.id], timeout: 60)
+        } catch {
+            await refresh(afterAction: true)
+            throw error
+        }
+        await refresh(afterAction: true)
     }
 }

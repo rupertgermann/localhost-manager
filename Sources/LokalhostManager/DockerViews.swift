@@ -5,6 +5,7 @@ struct DockerServiceView: View {
     @EnvironmentObject var store: AppStore
     @ObservedObject var docker: DockerStore
     let row: DockerRow
+    let showLogs: (DockerContainer) -> Void
     @State private var editing = false
 
     var body: some View {
@@ -26,14 +27,33 @@ struct DockerServiceView: View {
                     ForEach(current.ports, id: \.self) { Text($0.description).font(.caption.monospaced()) }
                 } else { Text("—").foregroundStyle(.secondary) }
             }.frame(minWidth: 145, maxWidth: .infinity, alignment: .leading)
-            if row.webTargets.count == 1, let target = row.webTargets.first {
-                Button("Öffnen") { open(target) }
-            } else if row.webTargets.count > 1 {
-                Menu("Öffnen") {
-                    ForEach(row.webTargets, id: \.self) { target in Button(target.absoluteString) { open(target) } }
-                }.fixedSize()
+            VStack(alignment: .trailing, spacing: 6) {
+                HStack {
+                    if let container = row.container {
+                        let busy = docker.busy.contains(container.id)
+                        if busy { ProgressView().controlSize(.small).accessibilityLabel("Docker-Aktion läuft") }
+                        ForEach(DockerAction.allCases.filter { $0.accepts(container.state) }, id: \.self) { action in
+                            Button(action.title) {
+                                Task {
+                                    do { try await docker.perform(action, on: row) }
+                                    catch { store.message = "\(row.editableRecord.name): \(error.localizedDescription)" }
+                                }
+                            }.disabled(row.current == nil || busy)
+                        }
+                    }
+                }
+                HStack {
+                    if row.webTargets.count == 1, let target = row.webTargets.first {
+                        Button("Öffnen") { open(target) }
+                    } else if row.webTargets.count > 1 {
+                        Menu("Öffnen") {
+                            ForEach(row.webTargets, id: \.self) { target in Button(target.absoluteString) { open(target) } }
+                        }.fixedSize()
+                    }
+                    Button("Logs") { if let current = row.current { showLogs(current) } }.disabled(row.current == nil)
+                    Button("Zuordnen") { editing = true }.disabled(!store.ready)
+                }
             }
-            Button("Zuordnen") { editing = true }.disabled(!store.ready)
         }
         .sheet(isPresented: $editing) { DockerEditor(row: row, docker: docker) }
     }
@@ -104,5 +124,56 @@ private struct DockerEditor: View {
             try await store.save(next)
             dismiss()
         } catch { self.error = error.localizedDescription }
+    }
+}
+
+struct DockerLogPanel: View {
+    @ObservedObject var docker: DockerStore
+    let container: DockerContainer
+    @Environment(\.dismiss) private var dismiss
+    @State private var output: String?
+    @State private var error: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Logs · \(container.name)").font(.title2.bold())
+            Text("\(container.instanceDescription) · \(container.id.prefix(12))").foregroundStyle(.secondary)
+            if let failure = docker.inventory.error {
+                Text("Docker-Verbindung unterbrochen: " + failure).textSelection(.enabled)
+            } else if let error {
+                Text("Container-Logs nicht lesbar: " + error).textSelection(.enabled)
+            } else if let output {
+                if output.isEmpty {
+                    Text("Noch keine Logausgabe.").foregroundStyle(.secondary)
+                } else {
+                    ScrollView([.vertical, .horizontal]) {
+                        Text(verbatim: output).font(.body.monospaced()).textSelection(.enabled)
+                    }
+                }
+            } else {
+                ProgressView("Logs werden gelesen …")
+            }
+            Spacer(minLength: 0)
+            HStack {
+                Text("Letzte 200 Zeilen, bis zu 64 KiB").font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button("Schließen") { dismiss() }.keyboardShortcut(.cancelAction)
+            }
+        }.padding(20).frame(width: 620, height: 410)
+        .task(id: container.id) {
+            while !Task.isCancelled {
+                do {
+                    let tail = try await docker.cli.logs(id: container.id)
+                    try Task.checkCancellation()
+                    output = tail
+                    error = nil
+                } catch {
+                    guard !Task.isCancelled else { break }
+                    output = nil
+                    self.error = error.localizedDescription
+                }
+                do { try await Task.sleep(for: .seconds(1)) } catch { break }
+            }
+        }
     }
 }
