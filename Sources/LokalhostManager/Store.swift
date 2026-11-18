@@ -10,6 +10,10 @@ final class AppStore: ObservableObject {
     @Published var message: String?
     let dataDirectory: URL
     private var saving = false
+    @Published private(set) var managed: [UUID: ManagedStatus] = [:]
+    @Published private(set) var managedErrors: [UUID: String] = [:]
+    @Published private(set) var starting: Set<UUID> = []
+    private var refreshRequested = false
 
     init() {
         let environment = ProcessInfo.processInfo.environment
@@ -36,11 +40,33 @@ final class AppStore: ObservableObject {
     }
 
     func refresh() async {
-        guard !refreshing else { return }
+        guard !refreshing else { refreshRequested = true; return }
         refreshing = true
         defer { refreshing = false }
-        do { inventory = try await ListenerInventory.scan() }
-        catch { inventory = ListenerInventory(listeners: [], warning: error.localizedDescription) }
+        repeat {
+            refreshRequested = false
+            do { inventory = try await ListenerInventory.scan() }
+            catch { inventory = ListenerInventory(listeners: [], warning: error.localizedDescription) }
+            let jobs = ManagedJobs(directory: dataDirectory), services = catalog.services, listeners = inventory.listeners
+            (managed, managedErrors) = await Task.detached {
+                var states: [UUID: ManagedStatus] = [:], errors: [UUID: String] = [:]
+                for service in services {
+                    do { states[service.id] = try jobs.status(service.id, listeners: listeners) }
+                    catch { errors[service.id] = error.localizedDescription }
+                }
+                return (states, errors)
+            }.value
+        } while refreshRequested
+    }
+
+    func start(_ service: ServiceRecord) async {
+        guard ready, starting.insert(service.id).inserted else { return }
+        defer { starting.remove(service.id) }
+        message = nil
+        let jobs = ManagedJobs(directory: dataDirectory)
+        do { try await Task.detached { try jobs.start(service) }.value }
+        catch { message = error.localizedDescription }
+        await refresh()
     }
 
     func save(_ next: Catalog) async throws {

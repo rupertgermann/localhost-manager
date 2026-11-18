@@ -77,10 +77,14 @@ struct ServiceEditor: View {
                 Text("Automatisch zuordnen").tag(UUID?.none)
                 ForEach(store.catalog.projects) { project in Text(project.name).tag(Optional(project.id)) }
             }
-            if let listener = row.listener {
-                LabeledContent("Aktive Bindungen", value: listener.bindings.map(\.description).joined(separator: "\n"))
+            if !row.bindings.isEmpty {
+                LabeledContent("Aktive Bindungen", value: row.bindings.map(\.description).joined(separator: "\n"))
             }
-            if let directory = record.directory { LabeledContent("Arbeitsordner", value: directory) }
+            LabeledContent("Arbeitsordner") { TextField("Arbeitsordner", text: field(\.directory)).labelsHidden() }
+            LabeledContent("Startbefehl") { TextField("Startbefehl", text: field(\.startCommand)).labelsHidden() }
+            Text("Der bestätigte Befehl läuft mit /bin/sh. Projektprogramme können mit ihrem Pfad angegeben werden.")
+                .font(.caption).foregroundStyle(.secondary)
+            LabeledContent("Env-Datei (optional)") { TextField("Env-Datei (optional)", text: field(\.envFile)).labelsHidden() }
             VStack(alignment: .leading, spacing: 5) {
                 Text("Webziele").font(.headline)
                 Text("Pro Zeile eine lokale HTTP- oder HTTPS-Adresse mit aktivem Host-Port.").font(.callout).foregroundStyle(.secondary)
@@ -97,12 +101,17 @@ struct ServiceEditor: View {
         }.textFieldStyle(.roundedBorder).padding(24).frame(width: 520)
     }
 
+    private func field(_ path: WritableKeyPath<ServiceRecord, String?>) -> Binding<String> {
+        Binding(get: { record[keyPath: path] ?? "" }, set: { record[keyPath: path] = $0.isEmpty ? nil : $0 })
+    }
+
     private func save() async {
         guard !saving else { return }
         saving = true
         defer { saving = false }
         do {
-            let bindings = store.inventory.listeners.first { $0.identity != nil && $0.identity == row.listener?.identity }?.bindings ?? []
+            let bindings = store.catalog.rows(for: store.inventory.listeners, managed: store.managed)
+                .first { $0.id == row.id }?.bindings ?? []
             var urls: [URL] = []
             for line in targets.split(whereSeparator: \.isNewline) {
                 let address = line.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -115,6 +124,11 @@ struct ServiceEditor: View {
             }
             var edited = record
             edited.name = record.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let path = edited.directory { edited.directory = (path as NSString).expandingTildeInPath }
+            if let path = edited.envFile { edited.envFile = (path as NSString).expandingTildeInPath }
+            if edited.startCommand != nil, edited.directory?.hasPrefix("/") != true {
+                throw ManagerError("Ein Startprofil benötigt einen absoluten Arbeitsordner.")
+            }
             edited.webTargets = urls
             if let identity = row.listener?.identity { edited.lastIdentity = identity }
             var next = store.catalog
