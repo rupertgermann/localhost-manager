@@ -113,6 +113,7 @@ struct Dashboard: View {
             } else if targets.count > 1 {
                 Menu("Öffnen") { ForEach(targets, id: \.self) { url in Button(url.absoluteString) { open(url) } } }.fixedSize()
             }
+            ExternalServiceActions(row: row)
             Button("Bearbeiten") { editing = row }.disabled(!store.ready)
         }
     }

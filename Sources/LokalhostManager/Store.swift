@@ -7,6 +7,7 @@ final class AppStore: ObservableObject {
     @Published private(set) var inventory = ListenerInventory(listeners: [], warning: nil)
     @Published private(set) var refreshing = false
     @Published private(set) var ready = false
+    @Published private(set) var stoppingExternal: String?
     @Published var message: String?
     let dataDirectory: URL
     private var saving = false
@@ -41,6 +42,20 @@ final class AppStore: ObservableObject {
         defer { refreshing = false }
         do { inventory = try await ListenerInventory.scan() }
         catch { inventory = ListenerInventory(listeners: [], warning: error.localizedDescription) }
+    }
+
+    func stopExternal(_ listener: LocalListener, row: ServiceRow) async {
+        guard stoppingExternal == nil else { return }
+        stoppingExternal = row.id
+        defer { stoppingExternal = nil }
+        do {
+            try await ExternalProcess.stop(listener)
+            message = "\(row.name) wurde gestoppt."
+        } catch { message = "\(row.name): \(error.localizedDescription)" }
+        while refreshing {
+            do { try await Task.sleep(for: .milliseconds(50)) } catch { return }
+        }
+        await refresh()
     }
 
     func save(_ next: Catalog) async throws {
