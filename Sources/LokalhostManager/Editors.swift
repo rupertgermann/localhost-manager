@@ -120,16 +120,6 @@ struct ServiceEditor: View {
         do {
             let bindings = store.catalog.rows(for: store.inventory.listeners, managed: store.managed)
                 .first { $0.id == row.id }?.bindings ?? []
-            var urls: [URL] = []
-            for line in targets.split(whereSeparator: \.isNewline) {
-                let address = line.trimmingCharacters(in: .whitespacesAndNewlines)
-                if address.isEmpty { continue }
-                guard let url = URL(string: address),
-                      record.webTargets.contains(url) || WebTarget.accepts(url, on: bindings) else {
-                    throw ManagerError("Webziel benötigt eine lokale HTTP(S)-Adresse mit einem aktiven Host-Port.")
-                }
-                if !urls.contains(url) { urls.append(url) }
-            }
             var edited = record
             edited.name = record.name.trimmingCharacters(in: .whitespacesAndNewlines)
             if let path = edited.directory {
@@ -144,7 +134,7 @@ struct ServiceEditor: View {
                 guard expanded.hasPrefix("/") else { throw ManagerError("Bitte einen absoluten Pfad zur Logdatei angeben.") }
                 edited.logPath = expanded
             }
-            edited.webTargets = urls
+            edited.webTargets = try WebTarget.confirmed(targets, existing: record.webTargets, bindings: bindings)
             if row.managed?.isRunning != true, let listener = row.listener, let identity = listener.identity {
                 edited.lastIdentity = identity
                 edited.externalPorts = Set(listener.bindings.map(\.port))

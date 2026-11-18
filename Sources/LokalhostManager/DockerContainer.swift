@@ -40,7 +40,7 @@ struct DockerContainer: Decodable, Identifiable {
         oneoff = try label(.oneoff)?.lowercased() == "true"
         let published = try data.decodeIfPresent([String: [Address]?].self, forKey: .ports) ?? [:]
         var ports = Set<DockerPort>()
-        for (destination, bindings) in published where ["running", "paused", "restarting"].contains(state) {
+        for (destination, bindings) in published where Self.isActive(state) {
             for binding in bindings ?? [] {
                 guard let port = Int(binding.HostPort), (1...65535).contains(port), !binding.HostIp.isEmpty else { continue }
                 let host = HostBinding(family: binding.HostIp.contains(":") ? "IPv6" : "IPv4", host: binding.HostIp, port: port)
@@ -56,17 +56,7 @@ struct DockerContainer: Decodable, Identifiable {
         return "\(project) / \(service)" + instance
     }
 
-    var webTargets: [URL] {
-        guard state == "running" else { return [] }
-        return ports.compactMap { port in
-            guard ["80/tcp", "443/tcp"].contains(port.destination) else { return nil }
-            var host = port.host.host
-            if host == "::" { host = "::1" }
-            if host == "0.0.0.0" { host = "127.0.0.1" }
-            if host.contains(":") { host = "[\(host)]" }
-            let scheme = port.destination == "443/tcp" ? "https" : "http"
-            guard let url = URL(string: "\(scheme)://\(host):\(port.host.port)"), WebTarget.accepts(url, on: [port.host]) else { return nil }
-            return url
-        }
+    static func isActive(_ state: String) -> Bool {
+        ["running", "paused", "restarting"].contains(state)
     }
 }

@@ -9,7 +9,12 @@ final class DockerTests: XCTestCase {
         let container = try JSONDecoder().decode(DockerContainer.self, from: Data(json.utf8))
         XCTAssertEqual(container.name, "shop-web-2")
         XCTAssertEqual(container.ports.map(\.description).sorted(), ["0.0.0.0:18080 → 80/tcp", "127.0.0.1:1053 → 53/udp", "[::]:18080 → 80/tcp"])
-        XCTAssertEqual(container.webTargets.map(\.absoluteString).sorted(), ["http://127.0.0.1:18080", "http://[::1]:18080"])
+        let inventory = DockerInventory(containers: [container], available: true)
+        var row = try XCTUnwrap(inventory.rows(socket: "/test.sock", catalog: Catalog(), showStopped: false).first)
+        XCTAssertTrue(row.webTargets.isEmpty)
+        let confirmed = try XCTUnwrap(URL(string: "https://127.0.0.1:18080/app"))
+        row.editableRecord.webTargets = [confirmed, try XCTUnwrap(URL(string: "http://127.0.0.1:1053"))]
+        XCTAssertEqual(row.webTargets, [confirmed])
         XCTAssertEqual(container.instanceDescription, "shop / web · Instanz 2")
     }
     func testOnlySelectedLocalSocketReachesCLIAndHungInventoryFails() async throws {
@@ -65,6 +70,27 @@ final class DockerTests: XCTestCase {
         let unknown = inventory.rows(socket: socket, catalog: catalog, showStopped: false)
         XCTAssertTrue(unknown.allSatisfy { $0.status == "Unbekannt" && $0.current == nil })
     }
+    func testManualMappingDuringDuplicateReplicaSurvivesOnlyWithSelectedID() throws {
+        func replica(_ id: String) throws -> DockerContainer {
+            let json = #"{"id":"ID","name":"web","state":"running","project":"app","service":"web","number":"1"}"#
+            return try JSONDecoder().decode(DockerContainer.self, from: Data(json.replacingOccurrences(of: "ID", with: id).utf8))
+        }
+        let first = try replica("first"), second = try replica("second")
+        var inventory = DockerInventory(containers: [first, second], available: true)
+        var catalog = Catalog()
+        func rows() -> [DockerRow] { inventory.rows(socket: "/test", catalog: catalog, showStopped: true) }
+        let project = UUID()
+        var selected = try XCTUnwrap(rows().first { $0.current?.id == first.id }?.editableRecord)
+        selected.projectID = project
+        catalog.docker = [selected]
+        inventory.containers = [first]
+        XCTAssertEqual(rows().count, 1)
+        XCTAssertEqual(rows().first?.projectID, project)
+        inventory.containers = [second]
+        XCTAssertNil(rows().first { $0.current != nil }?.projectID)
+        XCTAssertEqual(rows().first { $0.current == nil }?.projectID, project)
+    }
+
     func testOnlyConfirmedMatchingForwarderBindingIsHidden() throws {
         let json = #"{"id":"current","name":"/site","state":"running","ports":{"80/tcp":[{"HostIp":"::","HostPort":"8080"}]}}"#
         let site = try JSONDecoder().decode(DockerContainer.self, from: Data(json.utf8))

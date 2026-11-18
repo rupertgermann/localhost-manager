@@ -88,7 +88,7 @@ private struct DockerEditor: View {
                 Text("Automatisch zuordnen").tag(UUID?.none)
                 ForEach(store.catalog.projects) { project in Text(project.name).tag(Optional(project.id)) }
             }
-            Text("Zusätzliche lokale Webziele").font(.headline)
+            Text("Lokale Webziele").font(.headline)
             TextEditor(text: $targets).font(.body.monospaced()).accessibilityLabel("Webziele")
                 .frame(height: 76).border(.quaternary)
             if !error.isEmpty { Text(error).foregroundStyle(.red) }
@@ -109,16 +109,7 @@ private struct DockerEditor: View {
             record.projectID = projectID
             let current = docker.inventory.rows(socket: docker.cli.socket, catalog: store.catalog, showStopped: true).first { $0.id == row.id }?.current
             let bindings = current?.ports.filter { $0.destination.hasSuffix("/tcp") }.map(\.host) ?? []
-            var urls: [URL] = []
-            for line in targets.split(whereSeparator: \.isNewline) {
-                let address = line.trimmingCharacters(in: .whitespacesAndNewlines)
-                if address.isEmpty { continue }
-                guard let url = URL(string: address), record.webTargets.contains(url) || WebTarget.accepts(url, on: bindings) else {
-                    throw ManagerError("Webziel benötigt eine lokale HTTP(S)-Adresse mit einem veröffentlichten TCP-Port.")
-                }
-                if !urls.contains(url) { urls.append(url) }
-            }
-            record.webTargets = urls
+            record.webTargets = try WebTarget.confirmed(targets, existing: record.webTargets, bindings: bindings)
             var next = store.catalog
             next.docker = (next.docker ?? []).filter { $0.socket != record.socket || $0.key != record.key } + [record]
             try await store.save(next)
