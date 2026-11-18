@@ -43,7 +43,7 @@ struct ProjectEditor: View {
                 guard path.hasPrefix("/"), FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue else {
                     throw ManagerError("Bitte einen vorhandenen Projektordner wählen.")
                 }
-                return URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
+                return physicalDirectory(path)
             }.value
             var next = store.catalog
             next.projects.append(Project(name: name.trimmingCharacters(in: .whitespacesAndNewlines), directory: folder))

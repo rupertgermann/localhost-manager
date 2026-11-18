@@ -1,4 +1,12 @@
+import Darwin
 import Foundation
+
+// Foundation may abbreviate /private/tmp to /tmp again when standardizing a file URL.
+func physicalDirectory(_ path: String) -> String {
+    guard path.hasPrefix("/"), let buffer = realpath(path, nil) else { return path }
+    defer { free(buffer) }
+    return String(cString: buffer)
+}
 
 struct Project: Identifiable, Codable {
     var id = UUID()
@@ -35,6 +43,20 @@ struct ServiceRow: Identifiable {
 struct Catalog: Codable {
     var projects: [Project] = []
     var services: [ServiceRecord] = []
+
+    static func read(from file: URL) throws -> Self {
+        do {
+            var catalog = try JSONDecoder().decode(Catalog.self, from: Data(contentsOf: file))
+            for index in catalog.projects.indices {
+                catalog.projects[index].directory = physicalDirectory(catalog.projects[index].directory)
+            }
+            for index in catalog.services.indices {
+                catalog.services[index].directory = catalog.services[index].directory.map(physicalDirectory)
+            }
+            return catalog
+        }
+        catch let error as CocoaError where error.code == .fileReadNoSuchFile { return Catalog() }
+    }
 
     private func project(for directory: String?) -> UUID? {
         guard let directory else { return nil }

@@ -25,8 +25,7 @@ final class AppStore: ObservableObject {
         let file = dataDirectory.appendingPathComponent("catalog.json")
         do {
             catalog = try await Task.detached {
-                do { return try JSONDecoder().decode(Catalog.self, from: Data(contentsOf: file)) }
-                catch let error as CocoaError where error.code == .fileReadNoSuchFile { return Catalog() }
+                try Catalog.read(from: file)
             }.value
             ready = true
         } catch {

@@ -77,7 +77,7 @@ struct ListenerInventory {
                     ? withUnsafeBytes(of: &cwd.pvi_cdir.vip_path) { String(decoding: $0.prefix(while: { $0 != 0 }), as: UTF8.self) } : nil
                 var path = [CChar](repeating: 0, count: 4096)
                 let executable = proc_pidpath(pid, &path, UInt32(path.count)) > 0 ? String(cString: path) : nil
-                listeners.append(LocalListener(pid: pid, name: "Prozess \(pid)", identity: ProcessIdentity.read(pid), directory: directory, executable: executable))
+                listeners.append(LocalListener(pid: pid, name: "Prozess \(pid)", identity: ProcessIdentity.read(pid), directory: directory.map(physicalDirectory), executable: executable))
             case 99 where !listeners.isEmpty: listeners[listeners.count - 1].name = value // c
             case 102: family = "" // f
             case 116: family = value // t
