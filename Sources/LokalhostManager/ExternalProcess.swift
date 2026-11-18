@@ -3,24 +3,26 @@ import Foundation
 
 enum ExternalProcess {
     static func stop(_ listener: LocalListener) async throws {
-        guard let identity = listener.identity, identity.pid > 1, identity.pid == listener.pid,
-              identity.pid != getpid(), identity.uid == geteuid() else {
+        if let error = listener.controlError { throw ManagerError(error) }
+        guard let identity = listener.identity, let executable = listener.executable else {
             throw ManagerError("Keine Berechtigung oder keine bestätigte Identität für diesen Prozess.")
         }
-        let fresh = try await ListenerInventory.scan()
-        guard let current = fresh.listeners.first(where: { $0.identity == identity }),
+        let fresh = try await ListenerInventory.currentListeners()
+        guard let current = fresh.first(where: { $0.identity == identity }),
+              current.controlError == nil, current.executable == executable,
               !listener.bindings.isEmpty, Set(current.bindings) == Set(listener.bindings) else {
             throw ManagerError("Prozess oder Bindungen haben sich geändert. Bitte den aktuellen Dienst auswählen.")
         }
-        try terminate(identity)
+        try terminate(identity, executable: executable)
 
-        let ports = Set(listener.bindings.map(\.port))
         let deadline = ContinuousClock.now + .seconds(4)
         var quietSince: ContinuousClock.Instant?
         repeat {
             try await Task.sleep(for: .milliseconds(150))
-            let inventory = try await ListenerInventory.scan()
-            let owners = inventory.listeners.filter { $0.bindings.contains { ports.contains($0.port) } }
+            let listeners = try await ListenerInventory.currentListeners()
+            let owners = listeners.filter { candidate in
+                candidate.bindings.contains { binding in listener.bindings.contains(where: binding.overlaps) }
+            }
             if let other = owners.first(where: { $0.identity != identity }) {
                 throw ManagerError("Port weiterhin belegt durch \(other.name) (PID \(other.pid)).")
             }
@@ -32,7 +34,7 @@ enum ExternalProcess {
         throw ManagerError("Beendigung nicht bestätigt. Der Prozess läuft noch oder der Port ist weiterhin belegt.")
     }
 
-    private static func terminate(_ identity: ProcessIdentity) throws {
+    private static func terminate(_ identity: ProcessIdentity, executable: String) throws {
         var task: mach_port_name_t = 0
         guard task_name_for_pid(mach_task_self_, identity.pid, &task) == KERN_SUCCESS else {
             throw ManagerError("Keine Berechtigung, die Prozessidentität für das Stoppen zu bestätigen.")
@@ -43,7 +45,8 @@ enum ExternalProcess {
         let result = withUnsafeMutableBytes(of: &token) { bytes in
             task_info(task, task_flavor_t(TASK_AUDIT_TOKEN), bytes.bindMemory(to: integer_t.self).baseAddress, &count)
         }
-        guard result == KERN_SUCCESS, ProcessIdentity.read(identity.pid) == identity else {
+        guard result == KERN_SUCCESS, ProcessIdentity.read(identity.pid) == identity,
+              ProcessIdentity.executable(of: identity.pid) == executable else {
             throw ManagerError("Die Prozessidentität hat sich geändert oder lässt sich nicht bestätigen.")
         }
         // Das Audit-Token bindet SIGTERM auch bei sofortiger PID-Wiederverwendung an diesen Prozess.

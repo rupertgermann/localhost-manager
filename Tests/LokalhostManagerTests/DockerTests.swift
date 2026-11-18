@@ -80,14 +80,18 @@ final class DockerTests: XCTestCase {
         var catalog = Catalog()
         func rows() -> [DockerRow] { inventory.rows(socket: "/test", catalog: catalog, showStopped: true) }
         let project = UUID()
+        inventory.containers = [first]
+        var compose = try XCTUnwrap(rows().first?.editableRecord)
+        compose.projectID = UUID()
+        inventory.containers = [first, second]
         var selected = try XCTUnwrap(rows().first { $0.current?.id == first.id }?.editableRecord)
         selected.projectID = project
-        catalog.docker = [selected]
+        catalog.docker = [selected, compose]
         inventory.containers = [first]
         XCTAssertEqual(rows().count, 1)
         XCTAssertEqual(rows().first?.projectID, project)
         inventory.containers = [second]
-        XCTAssertNil(rows().first { $0.current != nil }?.projectID)
+        XCTAssertEqual(rows().first { $0.current != nil }?.projectID, compose.projectID)
         XCTAssertEqual(rows().first { $0.current == nil }?.projectID, project)
     }
 

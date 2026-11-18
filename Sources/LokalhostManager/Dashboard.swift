@@ -143,15 +143,16 @@ struct Dashboard: View {
             let action = store.actions[row.id]
             let error = row.record.flatMap { store.managedErrors[$0.id] }
             let running = row.listener != nil || row.managed?.isRunning == true
-            let status = action?.rawValue ?? (error != nil ? "Unbekannt" : running ? "Läuft" : row.managed?.description ?? "Gestoppt")
-            Label(status, systemImage: running ? "circle.fill" : "stop.circle")
-                .font(.callout).foregroundStyle(running ? Color.teal : Color.secondary).frame(width: 92, alignment: .leading).help(error ?? status)
+            let uncertain = store.inventory.visibility == .unavailable || (store.inventory.visibility == .partial && !running)
+            let status = action?.rawValue ?? (error != nil || uncertain ? "Unbekannt" : running ? "Läuft" : row.managed?.description ?? "Gestoppt")
+            Label(status, systemImage: running && !uncertain ? "circle.fill" : "stop.circle")
+                .font(.callout).foregroundStyle(running && !uncertain ? Color.teal : Color.secondary).frame(width: 92, alignment: .leading).help(error ?? status)
             VStack(alignment: .leading, spacing: 2) {
                 if !row.bindings.isEmpty {
                     ForEach(row.bindings, id: \.self) { Text($0.description).font(.system(.caption, design: .monospaced)) }
                 } else { Text("—").foregroundStyle(.secondary) }
             }.frame(minWidth: 140, maxWidth: .infinity, alignment: .leading)
-            let targets = (row.record?.webTargets ?? []).filter { WebTarget.accepts($0, on: row.bindings) }
+            let targets = (store.inventory.visibility == .unavailable ? [] : row.record?.webTargets ?? []).filter { WebTarget.accepts($0, on: row.bindings) }
             if targets.count == 1 {
                 Button("Öffnen") { open(targets[0]) }
             } else if targets.count > 1 {
@@ -166,7 +167,8 @@ struct Dashboard: View {
                         Button("Neustarten") { Task { await store.perform(.restart, row: row) } }
                     }
                 }
-            }.disabled(action != nil || error != nil || !store.ready)
+            }.disabled(action != nil || error != nil || !store.ready || row.controlError != nil || store.inventory.visibility != .current)
+                .help(row.controlError ?? "")
             if let state = row.managed, state.isRunning || row.listener == nil {
                 ManagedLogsButton(name: row.name, run: state.run)
             } else {

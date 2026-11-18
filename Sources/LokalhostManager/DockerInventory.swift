@@ -65,7 +65,7 @@ struct DockerInventory {
             owners[port.host, default: 0] += 1
         }
         return listeners.compactMap { listener in
-            guard listener.executable == "/Applications/Docker.app/Contents/MacOS/com.docker.backend" else { return listener }
+            guard LocalListener.isDockerForwarder(listener.executable) else { return listener }
             var filtered = listener
             filtered.bindings.removeAll { binding in
                 var host = binding
@@ -85,7 +85,8 @@ struct DockerInventory {
         for container in containers {
             // Compose can temporarily present two containers for a replica during recreation.
             let exact = DockerKey.container(container.id)
-            let useExact = stored.contains { $0.key == exact } || instances[container.key]?.count != 1
+            let unique = instances[container.key]?.count == 1
+            let useExact = stored.contains { $0.key == exact } || !unique
             let key = useExact ? exact : container.key
             let saved = stored.first { $0.key == key }
             guard showStopped || saved != nil || DockerContainer.isActive(container.state) else { continue }
@@ -93,6 +94,7 @@ struct DockerInventory {
                                       composeProject: container.project, directory: container.workingDirectory,
                                       projectID: saved?.projectID, webTargets: saved?.webTargets ?? [])
             seen.insert(key)
+            if unique { seen.insert(container.key) }
             rows.append(DockerRow(editableRecord: record, container: container, available: available,
                                   projectID: record.projectID ?? catalog.project(for: record.directory)))
         }

@@ -23,7 +23,7 @@ struct ServiceRecord: Identifiable, Codable {
     var envFile: String?
     var executable: String?
     var lastIdentity: ProcessIdentity?
-    var externalPorts: Set<Int>?
+    var externalPorts: Set<HostBinding>?
     var externalSupervisor: ProcessIdentity?
     var webTargets: [URL] = []
     var logPath: String?
@@ -38,6 +38,14 @@ struct ServiceRow: Identifiable {
     var bindings: [HostBinding] {
         if let managed, managed.isRunning { return managed.listeners.flatMap(\.bindings).reduce(into: []) { if !$0.contains($1) { $0.append($1) } } }
         return listener?.bindings ?? []
+    }
+
+    var controlError: String? {
+        if LocalListener.isDockerForwarder(record?.executable) ||
+            managed?.listeners.contains(where: { LocalListener.isDockerForwarder($0.executable) }) == true {
+            return LocalListener.dockerControlError
+        }
+        return listener?.controlError
     }
 
     var id: String {

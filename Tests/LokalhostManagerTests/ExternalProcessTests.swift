@@ -2,6 +2,42 @@ import XCTest
 @testable import LokalhostManager
 
 final class ExternalProcessTests: XCTestCase {
+    func testDockerForwarderCannotBeStoppedOrRestartedThroughNativeActions() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let fixture = try ListenerFixture()
+        defer { fixture.close() }
+        let listeners = try await ListenerInventory.scan().listeners
+        var shown = try XCTUnwrap(listeners.first { $0.pid == fixture.process.processIdentifier })
+        shown.executable = "/Applications/Docker.app/Contents/MacOS/com.docker.backend"
+        let record = ServiceRecord(name: "Forwarder", directory: directory.path, startCommand: "exit 0", lastIdentity: shown.identity)
+        let row = ServiceRow(record: record, listener: shown)
+        for action in [ServiceAction.stop, .restart] {
+            do {
+                try await ManagedJobs(directory: directory).perform(action, row: row)
+                XCTFail("Native Docker-Aktion zugelassen")
+            } catch { XCTAssertTrue(error.localizedDescription.contains("Docker"), error.localizedDescription) }
+        }
+        do {
+            try await ExternalProcess.stop(shown)
+            XCTFail("Forwarder zugelassen")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("Docker"), error.localizedDescription) }
+        XCTAssertTrue(fixture.process.isRunning)
+    }
+
+    func testStopLeavesIPv6ListenerOnSamePortRunning() async throws {
+        let first = try ListenerFixture()
+        defer { first.close() }
+        let other = try ListenerFixture(port: first.port, host: "::1")
+        defer { other.close() }
+        let listeners = try await ListenerInventory.scan().listeners
+        let target = try XCTUnwrap(listeners.first { $0.pid == first.process.processIdentifier })
+        let sibling = try XCTUnwrap(listeners.first { $0.pid == other.process.processIdentifier })
+        XCTAssertNoThrow(try Predecessor(processes: [], ports: Set(target.bindings)).checkPorts([sibling]))
+        try await ExternalProcess.stop(target)
+        XCTAssertTrue(other.process.isRunning)
+    }
+
     func testWatcherRetainsPortAndStaleStopCannotTerminateReplacement() async throws {
         let first = try ListenerFixture()
         defer { first.close() }
@@ -50,14 +86,14 @@ final class ListenerFixture {
     let process = Process()
     let port: Int
 
-    init(port: Int = 0) throws {
+    init(port: Int = 0, host: String = "127.0.0.1") throws {
         let output = Pipe()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/perl")
-        process.arguments = ["-MIO::Socket::INET", "-e", """
-            my $s = IO::Socket::INET->new(LocalAddr=>'127.0.0.1', LocalPort=>$ARGV[0],
+        process.arguments = ["-MIO::Socket::IP", "-e", """
+            my $s = IO::Socket::IP->new(LocalHost=>$ARGV[1], LocalPort=>$ARGV[0], Proto=>'tcp',
                 Listen=>1, ReuseAddr=>1) or die $!;
             $|=1; print $s->sockport, "\\n"; sleep 20;
-            """, String(port)]
+            """, String(port), host]
         process.environment = ["LC_ALL": "C"]
         process.standardOutput = output
         try process.run()
