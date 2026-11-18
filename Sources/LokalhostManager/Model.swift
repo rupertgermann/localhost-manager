@@ -15,6 +15,8 @@ struct ServiceRecord: Identifiable, Codable {
     var envFile: String?
     var executable: String?
     var lastIdentity: ProcessIdentity?
+    var externalPorts: Set<Int>?
+    var externalSupervisor: ProcessIdentity?
     var webTargets: [URL] = []
     var logPath: String?
 }
