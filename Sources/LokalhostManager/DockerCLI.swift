@@ -23,8 +23,8 @@ struct DockerCLI {
     }
 
     func run(_ arguments: [String], timeout: TimeInterval = 8, logTailBytes: Int? = nil) async throws -> Output {
-        guard socket.hasPrefix("/") else { throw ManagerError("Docker benötigt einen absoluten lokalen Unix-Socket.") }
-        guard let executable else { throw ManagerError("Docker-CLI fehlt. Docker Desktop oder die lokale CLI installieren.") }
+        guard socket.hasPrefix("/") else { throw ManagerError("Docker requires an absolute path to a local Unix socket.") }
+        guard let executable else { throw ManagerError("Docker CLI not found. Install Docker Desktop or the local CLI.") }
         return try await Task.detached {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: executable)
@@ -53,20 +53,20 @@ struct DockerCLI {
             }
             guard finished else {
                 if process.isRunning { kill(process.processIdentifier, SIGKILL) }
-                throw ManagerError("Docker: Zeitüberschreitung am lokalen Socket \(socket).")
+                throw ManagerError("Docker timed out connecting to the local socket \(socket).")
             }
             let result = try await Output(stdout: output.value, stderr: errors.value)
             guard process.terminationStatus == 0 else {
                 let diagnostic = logTailBytes == nil ? result.stderr : result.stdout
                 let message = String(decoding: diagnostic, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-                throw ManagerError("Docker (\(socket)): " + (message.isEmpty ? "CLI-Fehler \(process.terminationStatus)" : message))
+                throw ManagerError("Docker (\(socket)): " + (message.isEmpty ? "CLI error \(process.terminationStatus)" : message))
             }
             return result
         }.value
     }
 
     func logs(id: String) async throws -> String {
-        guard Self.isFullID(id) else { throw ManagerError("Die vollständige Container-ID fehlt.") }
+        guard Self.isFullID(id) else { throw ManagerError("The full container ID is missing.") }
         let output = try await run(["logs", "--tail", "200", id], logTailBytes: 64 * 1024)
         return String(decoding: output.stdout, as: UTF8.self)
     }
@@ -87,7 +87,7 @@ struct DockerCLI {
 
     func inspect(_ ids: [String]) async throws -> [DockerContainer] {
         // Select only display fields. A full inspect also contains the container's environment and secrets.
-        let format = #"{"id":{{json .Id}},"name":{{json .Name}},"state":{{json .State.Status}},"ports":{{json .NetworkSettings.Ports}},"project":{{json (index .Config.Labels "com.docker.compose.project")}},"service":{{json (index .Config.Labels "com.docker.compose.service")}},"number":{{json (index .Config.Labels "com.docker.compose.container-number")}},"workingDirectory":{{json (index .Config.Labels "com.docker.compose.project.working_dir")}},"oneoff":{{json (index .Config.Labels "com.docker.compose.oneoff")}}}"#
+        let format = #"{"id":{{json .Id}},"name":{{json .Name}},"state":{{json .State.Status}},"ports":{{json .NetworkSettings.Ports}},"project":{{json (index .Config.Labels "com.docker.compose.project")}},"service":{{json (index .Config.Labels "com.docker.compose.service")}},"number":{{json (index .Config.Labels "com.docker.compose.container-number")}},"mounts":{{json .Mounts}},"containerDirectory":{{json .Config.WorkingDir}},"workingDirectory":{{json (index .Config.Labels "com.docker.compose.project.working_dir")}},"oneoff":{{json (index .Config.Labels "com.docker.compose.oneoff")}}}"#
         let data = try await run(["inspect", "--type", "container", "--format", format] + ids)
         return try data.stdout.split(separator: 10).map { try JSONDecoder().decode(DockerContainer.self, from: Data($0)) }
     }

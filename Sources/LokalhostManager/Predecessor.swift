@@ -11,7 +11,7 @@ struct Predecessor: Codable {
     func checkPorts(_ listeners: [LocalListener], excluding owned: Set<ProcessIdentity> = []) throws {
         for listener in listeners where listener.identity.map(owned.contains) != true {
             if let binding = listener.bindings.first(where: { binding in ports.contains(where: binding.overlaps) }) {
-                throw ManagerError("Port \(binding.port) weiterhin belegt durch \(listener.name) (PID \(listener.pid)).")
+                throw ManagerError("Port \(binding.port) still in use by \(listener.name) (PID \(listener.pid)).")
             }
         }
     }
@@ -23,13 +23,13 @@ struct Predecessor: Codable {
     }
 
     func checkEnded() throws {
-        if hasLiveProcesses { throw ManagerError("Der vorherige Prozess oder eines seiner Kinder läuft noch.") }
+        if hasLiveProcesses { throw ManagerError("The previous process or one of its children is still running.") }
         try checkSupervisor()
     }
 
     func checkSupervisor() throws {
         if let supervisor, ProcessIdentity.read(supervisor.pid) == supervisor {
-            throw ManagerError("Der übergeordnete Starter oder Watcher läuft noch. Bitte zuerst im Terminal beenden.")
+            throw ManagerError("The parent process or watcher is still running. Stop it in the terminal first.")
         }
     }
 
@@ -40,7 +40,7 @@ struct Predecessor: Codable {
             while true {
                 let capacity = pids.count * MemoryLayout<pid_t>.stride
                 let bytes = proc_listpids(UInt32(PROC_PPID_ONLY), UInt32(parent.pid), &pids, Int32(capacity))
-                guard bytes >= 0 else { throw ManagerError("Prozesskinder konnten nicht geprüft werden.") }
+                guard bytes >= 0 else { throw ManagerError("Could not check the child processes.") }
                 if Int(bytes) == capacity { pids += Array(repeating: 0, count: pids.count); continue }
                 for pid in pids.prefix(Int(bytes) / MemoryLayout<pid_t>.stride) {
                     if let child = ProcessIdentity.read(pid), found.insert(child).inserted { pending.append(child) }
@@ -48,7 +48,7 @@ struct Predecessor: Codable {
                 break
             }
         }
-        guard ProcessIdentity.read(root.pid) == root else { throw ManagerError("Die Prozessidentität hat sich geändert.") }
+        guard ProcessIdentity.read(root.pid) == root else { throw ManagerError("The process identity has changed.") }
         return found
     }
 
@@ -57,10 +57,10 @@ struct Predecessor: Codable {
         var child = proc_bsdinfo()
         let size = Int32(MemoryLayout.size(ofValue: child))
         guard proc_pidinfo(root.pid, PROC_PIDTBSDINFO, 0, &child, size) == size,
-              ProcessIdentity.read(root.pid) == root else { throw ManagerError("Der Starter ist nicht eindeutig feststellbar.") }
+              ProcessIdentity.read(root.pid) == root else { throw ManagerError("Could not identify the parent process.") }
         let parent = pid_t(child.pbi_ppid)
         if parent == 1 { return nil }
-        guard let identity = ProcessIdentity.read(parent) else { throw ManagerError("Der Starter ist nicht eindeutig feststellbar.") }
+        guard let identity = ProcessIdentity.read(parent) else { throw ManagerError("Could not identify the parent process.") }
         var path = [CChar](repeating: 0, count: 4096)
         if proc_pidpath(parent, &path, UInt32(path.count)) > 0,
            ["/bin/sh", "/bin/bash", "/bin/zsh", "/bin/ksh", "/bin/csh", "/bin/tcsh"].contains(String(cString: path)),

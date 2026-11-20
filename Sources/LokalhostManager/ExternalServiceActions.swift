@@ -21,7 +21,7 @@ struct FileLogView: View {
             FileLogContents(path: path)
             HStack {
                 Spacer()
-                Button("Schließen") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Close") { dismiss() }.keyboardShortcut(.cancelAction)
             }
         }.padding(20).frame(width: 620, height: 410)
     }
@@ -37,17 +37,17 @@ struct FileLogContents: View {
             HStack {
                 if let path { Text(path).font(.caption).textSelection(.enabled) }
                 Spacer()
-                Button("Aktualisieren") { revision += 1 }
+                Button("Refresh") { revision += 1 }
             }
             ScrollView {
                 Group {
                     switch content {
-                    case nil: Text("Logdatei wird gelesen …")
-                    case .empty: Text("Noch keine Ausgabe")
+                    case nil: Text("Reading log file…")
+                    case .empty: Text("No output yet")
                     case .unavailable(let reason): Text(reason)
                     case .output(let text, let truncated):
                         VStack(alignment: .leading, spacing: 6) {
-                            if truncated { Text("Letzte 64 KiB").font(.caption).foregroundStyle(.secondary) }
+                            if truncated { Text("Last 64 KiB").font(.caption).foregroundStyle(.secondary) }
                             Text(verbatim: text).font(.system(.body, design: .monospaced))
                         }
                     }

@@ -3,19 +3,29 @@ import SwiftUI
 
 struct Dashboard: View {
     @EnvironmentObject var store: AppStore
+    @Environment(\.colorScheme) private var colorScheme
+    @AppStorage("darkMode") private var darkMode: Bool?
     @StateObject private var docker = DockerStore()
     @State private var showStopped = false
     @State private var filter = ""
+    @State private var selectedCategory: ProcessCategory?
     @State private var systemServices = false
     @State private var creatingProject = false
     @State private var editing: ServiceRow?
     @State private var dockerLogs: DockerContainer?
 
     var body: some View {
+        let isDark = darkMode ?? (colorScheme == .dark)
+        let appearanceAction = isDark ? "Switch to Light Mode" : "Switch to Dark Mode"
         let listeners = docker.inventory.nativeListeners(store.inventory.listeners)
-        let rows = store.catalog.rows(for: listeners, managed: store.managed).filter(matches)
-        let containers = docker.inventory.rows(socket: docker.cli.socket, catalog: store.catalog, showStopped: showStopped).filter { row in
-            let text = [row.editableRecord.name, row.editableRecord.instance, row.container?.id ?? ""] + (row.container?.ports.map(\.description) ?? [])
+        let localRows = store.catalog.rows(for: listeners, managed: store.managed)
+            .filter { systemServices || $0.listener?.isSystem != true }
+        let dockerRows = docker.inventory.rows(socket: docker.cli.socket, catalog: store.catalog, showStopped: showStopped)
+        let categories = Set(localRows.map(\.category)).union(dockerRows.isEmpty ? [] : [.docker])
+        let rows = localRows.filter(matches)
+        let containers = dockerRows.filter { row in
+            guard selectedCategory == nil || selectedCategory == .docker else { return false }
+            let text = [row.editableRecord.name, row.editableRecord.instance, row.container?.id ?? "", row.container?.containerDirectory ?? "", row.editableRecord.directory ?? ""] + (row.container?.ports.map(\.description) ?? [])
             return filter.isEmpty || text.contains { $0.localizedCaseInsensitiveContains(filter) }
         }
         VStack(alignment: .leading, spacing: 0) {
@@ -24,30 +34,48 @@ struct Dashboard: View {
                     .foregroundStyle(.teal).frame(width: 48, height: 48)
                     .background(.teal.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Lokale Dienste").font(.largeTitle.bold())
-                    Text("\(rows.count + containers.count) Dienste · \(store.catalog.projects.count) Projekte")
+                    Text("Local Services").font(.largeTitle.bold())
+                    let serviceCount = rows.count + containers.count
+                    let projectCount = store.catalog.projects.count
+                    Text("\(serviceCount) \(serviceCount == 1 ? "service" : "services") · \(projectCount) \(projectCount == 1 ? "project" : "projects")")
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button { creatingProject = true } label: { Label("Projekt anlegen", systemImage: "folder.badge.plus") }
+                Button {
+                    darkMode = !isDark
+                } label: {
+                    Label(appearanceAction, systemImage: isDark ? "sun.max" : "moon")
+                        .labelStyle(.iconOnly)
+                }
+                .accessibilityLabel(appearanceAction)
+                .help(appearanceAction)
+                Button { creatingProject = true } label: { Label("Add Project", systemImage: "folder.badge.plus") }
                     .disabled(!store.ready)
             }.padding(20)
             Divider()
             HStack {
-                TextField("Dienste suchen", text: $filter).textFieldStyle(.roundedBorder).frame(maxWidth: 280)
+                TextField("Search services", text: $filter).textFieldStyle(.roundedBorder).frame(maxWidth: 280)
                 Spacer()
-                Toggle("Gestoppte Container", isOn: $showStopped).toggleStyle(.checkbox)
-                Toggle("Systemdienste", isOn: $systemServices).toggleStyle(.checkbox)
-                Button { Task { await store.refresh() }; Task { await docker.refresh() } } label: { Label("Aktualisieren", systemImage: "arrow.clockwise") }
+                Toggle("Stopped containers", isOn: $showStopped).toggleStyle(.checkbox)
+                Toggle("System services", isOn: $systemServices).toggleStyle(.checkbox)
+                Button { Task { await store.refresh() }; Task { await docker.refresh() } } label: { Label("Refresh", systemImage: "arrow.clockwise") }
                     .disabled(store.refreshing).keyboardShortcut("r")
-            }.padding(.horizontal, 20).padding(.vertical, 10)
+            }.padding(.horizontal, 20).padding(.top, 10).padding(.bottom, 6)
+            ScrollView(.horizontal) {
+                HStack(spacing: 6) {
+                    categoryButton(nil)
+                    ForEach(ProcessCategory.allCases.filter { categories.contains($0) || $0 == selectedCategory }, id: \.self) {
+                        categoryButton($0)
+                    }
+                }.padding(.horizontal, 20).padding(.bottom, 9)
+            }.accessibilityLabel("Filter by process category")
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 15) {
                     ForEach(store.catalog.projects) { project in
                         let services = rows.filter { $0.projectID == project.id }
                         let assigned = containers.filter { $0.projectID == project.id }
-                        if !services.isEmpty || !assigned.isEmpty || filter.isEmpty {
+                        if !services.isEmpty || !assigned.isEmpty || (filter.isEmpty && selectedCategory == nil) {
                             group(project.name, rows: services, containers: assigned, project: project)
                         }
                     }
@@ -58,9 +86,9 @@ struct Dashboard: View {
                         group(name, rows: [], containers: automatic.filter { $0.editableRecord.composeProject == name })
                     }
                     let standalone = automatic.filter { $0.editableRecord.composeProject == nil }
-                    if !unassigned.isEmpty || !standalone.isEmpty { group("Unzugeordnet", rows: unassigned, containers: standalone) }
+                    if !unassigned.isEmpty || !standalone.isEmpty { group("Unassigned", rows: unassigned, containers: standalone) }
                     if rows.isEmpty && containers.isEmpty {
-                        Text(store.refreshing ? "Listener werden gelesen …" : "Keine passenden Dienste gefunden.")
+                        Text(store.refreshing ? "Looking for listeners…" : "No matching services.")
                             .foregroundStyle(.secondary)
                     }
                 }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
@@ -69,17 +97,18 @@ struct Dashboard: View {
             if let error = docker.inventory.error {
                 Label(error, systemImage: "exclamationmark.triangle").font(.callout).textSelection(.enabled).padding(10)
             } else if docker.inventory.available && docker.inventory.containers.isEmpty {
-                Text("Docker: keine Container").font(.caption).foregroundStyle(.secondary).padding(10)
+                Text("Docker: no containers").font(.caption).foregroundStyle(.secondary).padding(10)
             }
             if let message = store.message ?? store.inventory.warning {
                 Label(message, systemImage: "exclamationmark.triangle").textSelection(.enabled)
                     .foregroundStyle(.primary).font(.callout).padding(10)
             } else {
-                Label("Sichtbare TCP-Listener des lokalen Macs", systemImage: "desktopcomputer")
+                Label("Local TCP listeners on this Mac", systemImage: "desktopcomputer")
                     .foregroundStyle(.secondary).font(.caption).padding(10)
             }
         }
         .frame(minWidth: 780, minHeight: 440)
+        .preferredColorScheme(darkMode.map { $0 ? .dark : .light })
         .sheet(isPresented: $creatingProject) { ProjectEditor() }
         .sheet(item: $dockerLogs) { DockerLogPanel(docker: docker, container: $0) }
         .sheet(item: $editing) { ServiceEditor(row: $0) }
@@ -98,10 +127,35 @@ struct Dashboard: View {
         }
     }
 
+    private func categoryButton(_ category: ProcessCategory?) -> some View {
+        let selected = selectedCategory == category
+        let color = category?.color ?? .accentColor
+        return Button {
+            selectedCategory = category
+        } label: {
+            HStack(spacing: 5) {
+                if selected {
+                    Image(systemName: "checkmark.circle.fill").foregroundStyle(color)
+                } else if category != nil {
+                    Circle().fill(color).frame(width: 7, height: 7)
+                }
+                Text(category?.rawValue ?? "All")
+            }
+            .font(.callout.weight(selected ? .semibold : .regular))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .background(color.opacity(selected ? 0.22 : 0.09), in: Capsule())
+            .overlay(Capsule().strokeBorder(selected ? color.opacity(0.7) : .clear))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
     private func matches(_ row: ServiceRow) -> Bool {
-        if !systemServices && row.listener?.isSystem == true { return false }
+        guard selectedCategory == nil || row.category == selectedCategory else { return false }
         if filter.isEmpty { return true }
-        let text = [row.name, row.listener?.directory ?? "", row.listener?.pid.description ?? ""] + row.bindings.map(\.description)
+        let text = [row.name, row.listener?.pid.description ?? ""] + row.workingDirectories + row.bindings.map(\.description)
         return text.contains { $0.localizedCaseInsensitiveContains(filter) }
     }
 
@@ -112,23 +166,26 @@ struct Dashboard: View {
                 Spacer()
                 Text("\(rows.count + containers.count)").foregroundStyle(.secondary).monospacedDigit()
                 if let project {
-                    Button("Dienst anlegen") {
+                    Button("Add Service") {
                         let record = ServiceRecord(name: "", projectID: project.id, directory: project.directory)
                         editing = ServiceRow(record: record, projectID: project.id)
                     }.disabled(!store.ready)
                 }
             }.padding(.horizontal, 12).padding(.vertical, 10)
             Divider()
-            if rows.isEmpty && containers.isEmpty { Text("Keine Dienste").foregroundStyle(.secondary).padding(12) }
+            if rows.isEmpty && containers.isEmpty { Text("No services").foregroundStyle(.secondary).padding(12) }
             ForEach(rows) { row in
                 service(row).padding(.horizontal, 12).padding(.vertical, 9)
+                    .background { row.category.rowBackground }
                 if row.id != rows.last?.id || !containers.isEmpty { Divider() }
             }
             ForEach(containers) { row in
                 DockerServiceView(docker: docker, row: row, showLogs: { dockerLogs = $0 }).padding(.horizontal, 12).padding(.vertical, 9)
+                    .background { ProcessCategory.docker.rowBackground }
                 if row.id != containers.last?.id { Divider() }
             }
-        }.background(.background, in: RoundedRectangle(cornerRadius: 9))
+        }.background(.background)
+            .clipShape(RoundedRectangle(cornerRadius: 9))
             .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(.quaternary))
     }
 
@@ -136,35 +193,47 @@ struct Dashboard: View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(row.name).font(.body.weight(.semibold))
-                if let listener = row.listener {
-                    Text("PID \(listener.pid)").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                HStack {
+                    row.category.badge
+                    if let listener = row.listener {
+                        Text("PID \(String(listener.pid))").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                    }
+                }
+                if row.workingDirectories.isEmpty {
+                    WorkingDirectoryLine(hostPath: nil)
+                } else {
+                    ForEach(row.workingDirectories, id: \.self) { WorkingDirectoryLine(hostPath: $0) }
                 }
             }.frame(minWidth: 95, maxWidth: .infinity, alignment: .leading)
             let action = store.actions[row.id]
             let error = row.record.flatMap { store.managedErrors[$0.id] }
             let running = row.listener != nil || row.managed?.isRunning == true
             let uncertain = store.inventory.visibility == .unavailable || (store.inventory.visibility == .partial && !running)
-            let status = action?.rawValue ?? (error != nil || uncertain ? "Unbekannt" : running ? "Läuft" : row.managed?.description ?? "Gestoppt")
+            let status = action?.rawValue ?? (error != nil || uncertain ? "Unknown" : running ? "Running" : row.managed?.description ?? "Stopped")
             Label(status, systemImage: running && !uncertain ? "circle.fill" : "stop.circle")
                 .font(.callout).foregroundStyle(running && !uncertain ? Color.teal : Color.secondary).frame(width: 92, alignment: .leading).help(error ?? status)
             VStack(alignment: .leading, spacing: 2) {
                 if !row.bindings.isEmpty {
-                    ForEach(row.bindings, id: \.self) { Text($0.description).font(.system(.caption, design: .monospaced)) }
+                    ForEach(row.bindings, id: \.self) { binding in
+                        let url = store.inventory.visibility == .unavailable ? nil :
+                            WebTarget.browserURL(for: binding, saved: row.record?.webTargets ?? [])
+                        EndpointLine(text: binding.description, url: url)
+                    }
                 } else { Text("—").foregroundStyle(.secondary) }
             }.frame(minWidth: 140, maxWidth: .infinity, alignment: .leading)
             let targets = (store.inventory.visibility == .unavailable ? [] : row.record?.webTargets ?? []).filter { WebTarget.accepts($0, on: row.bindings) }
             if targets.count == 1 {
-                Button("Öffnen") { open(targets[0]) }
+                Button("Open") { open(targets[0]) }
             } else if targets.count > 1 {
-                Menu("Öffnen") { ForEach(targets, id: \.self) { url in Button(url.absoluteString) { open(url) } } }.fixedSize()
+                Menu("Open") { ForEach(targets, id: \.self) { url in Button(url.absoluteString) { open(url) } } }.fixedSize()
             }
             Group {
-                if running { Button("Stoppen") { Task { await store.perform(.stop, row: row) } } }
+                if running { Button("Stop") { Task { await store.perform(.stop, row: row) } } }
                 if row.record?.startCommand != nil {
                     if !running {
-                        Button("Starten") { Task { await store.perform(.start, row: row) } }
+                        Button("Start") { Task { await store.perform(.start, row: row) } }
                     } else if row.managed?.isRunning == true || (row.listener?.identity != nil && row.listener?.identity == row.record?.lastIdentity) {
-                        Button("Neustarten") { Task { await store.perform(.restart, row: row) } }
+                        Button("Restart") { Task { await store.perform(.restart, row: row) } }
                     }
                 }
             }.disabled(action != nil || error != nil || !store.ready || row.controlError != nil || store.inventory.visibility != .current)
@@ -174,11 +243,70 @@ struct Dashboard: View {
             } else {
                 ExternalServiceActions(row: row)
             }
-            Button("Bearbeiten") { editing = row }.disabled(!store.ready || action != nil)
+            Button("Edit") { editing = row }.disabled(!store.ready || action != nil)
         }
     }
 
     private func open(_ url: URL) {
-        if !NSWorkspace.shared.open(url) { store.message = "Das Webziel konnte nicht geöffnet werden." }
+        if !NSWorkspace.shared.open(url) { store.message = "Could not open the web address." }
+    }
+}
+
+struct EndpointLine: View {
+    let text: String
+    let url: URL?
+
+    var body: some View {
+        Group {
+            if let url {
+                Link(text, destination: url).help("Open " + url.absoluteString)
+            } else {
+                Text(verbatim: text)
+            }
+        }.font(.caption.monospaced())
+    }
+}
+
+struct WorkingDirectoryLine: View {
+    @EnvironmentObject private var store: AppStore
+    let hostPath: String?
+    var containerPath: String?
+    var label = "Working directory"
+
+    var body: some View {
+        let path = containerPath ?? hostPath
+        let caption = Label {
+            Text(verbatim: path ?? "Working directory unavailable")
+                .lineLimit(1).truncationMode(.middle)
+        } icon: {
+            Image(systemName: "folder")
+        }
+        Group {
+            if let hostPath, hostPath.hasPrefix("/") {
+                Button {
+                    var isDirectory: ObjCBool = false
+                    guard FileManager.default.fileExists(atPath: hostPath, isDirectory: &isDirectory),
+                          isDirectory.boolValue,
+                          NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: hostPath) else {
+                        store.message = "Could not open this folder in Finder: " + hostPath
+                        return
+                    }
+                } label: { caption }
+                .buttonStyle(.link)
+                .help("Open in Finder: " + hostPath)
+                .accessibilityHint("Opens the folder in Finder")
+                .contextMenu {
+                    Button("Copy Path") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(path ?? hostPath, forType: .string)
+                    }
+                }
+            } else {
+                caption.foregroundStyle(.secondary).textSelection(.enabled)
+                    .help(path.map { label + ": " + $0 } ?? "Working directory unavailable")
+            }
+        }
+        .font(.caption)
+        .accessibilityLabel(Text("\(label): \(path ?? "unavailable")"))
     }
 }

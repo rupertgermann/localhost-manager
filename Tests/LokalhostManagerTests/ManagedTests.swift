@@ -6,7 +6,7 @@ final class ManagedTests: XCTestCase {
         let env = try ManagedEnvironment.parse("# local\nTOKEN='$(echo abc)'\nEMPTY=\nWITH_EQUALS=a=b\n")
         XCTAssertEqual(env, ["TOKEN": "$(echo abc)", "EMPTY": "", "WITH_EQUALS": "a=b"])
         XCTAssertThrowsError(try ManagedEnvironment.parse("A=ok\nSECRET VALUE")) {
-            XCTAssertTrue($0.localizedDescription.contains("Zeile 2"))
+            XCTAssertTrue($0.localizedDescription.contains("line 2"))
             XCTAssertFalse($0.localizedDescription.contains("SECRET"))
         }
     }
@@ -30,7 +30,7 @@ final class ManagedTests: XCTestCase {
         do {
             try await jobs.perform(.start, row: ServiceRow(record: record))
             XCTFail("Start sollte fehlschlagen.")
-        } catch { XCTAssertTrue(error.localizedDescription.contains("Programm nicht gefunden"), error.localizedDescription) }
+        } catch { XCTAssertTrue(error.localizedDescription.contains("Program not found"), error.localizedDescription) }
         XCTAssertEqual(try jobs.status(record.id)?.exitCode, 127)
     }
 
@@ -63,7 +63,7 @@ final class ManagedTests: XCTestCase {
         do {
             try await jobs.perform(.start, row: ServiceRow(record: record))
             XCTFail("Der Dienst läuft bereits")
-        } catch { XCTAssertTrue(error.localizedDescription.contains("läuft")) }
+        } catch { XCTAssertTrue(error.localizedDescription.contains("running")) }
         let reopened = ManagedJobs(directory: data)
         let inventory = try await ListenerInventory.scan()
         let rows = Catalog(services: [record]).rows(for: inventory.listeners, managed: [record.id: try XCTUnwrap(try reopened.status(record.id, listeners: inventory.listeners))])
@@ -91,7 +91,7 @@ final class ManagedTests: XCTestCase {
             return outcomes
         }
         XCTAssertEqual(attempts.filter { if case .success = $0 { return true }; return false }.count, 1)
-        XCTAssertTrue(attempts.contains { if case let .failure(error) = $0 { return error.localizedDescription.contains("Aktion") }; return false })
+        XCTAssertTrue(attempts.contains { if case let .failure(error) = $0 { return error.localizedDescription.contains("action") }; return false })
         let nextInventory = try await ListenerInventory.scan()
         let next = try XCTUnwrap(try reopened.status(record.id, listeners: nextInventory.listeners))
         defer { _ = try? jobs.bootout(next.run) }
@@ -111,7 +111,7 @@ final class ManagedTests: XCTestCase {
         do {
             try await reopened.perform(.start, row: ServiceRow(record: record, managed: cold))
             XCTFail("Port wurde inzwischen anderweitig belegt")
-        } catch { XCTAssertTrue(error.localizedDescription.contains("belegt"), error.localizedDescription) }
+        } catch { XCTAssertTrue(error.localizedDescription.contains("in use"), error.localizedDescription) }
         XCTAssertTrue(conflict.process.isRunning)
         XCTAssertEqual(try reopened.status(record.id)?.run.id, next.run.id)
         XCTAssertTrue(try String(contentsOf: reopened.log(state.run, stderr: true)).contains("after reopen"))
@@ -135,7 +135,7 @@ final class ManagedTests: XCTestCase {
         do {
             try await jobs.perform(.start, row: ServiceRow(record: second))
             XCTFail("Ein nicht zugeordneter passender Prozess muss den Start blockieren.")
-        } catch { XCTAssertTrue(error.localizedDescription.contains("externer Dienst"), error.localizedDescription) }
+        } catch { XCTAssertTrue(error.localizedDescription.contains("external service"), error.localizedDescription) }
         try await jobs.perform(.start, row: ServiceRow(record: second), services: [first, second])
         defer { if let state = try? jobs.status(second.id) { try? jobs.bootout(state.run) } }
         let fresh = try await ListenerInventory.scan().listeners
@@ -171,7 +171,7 @@ final class ManagedTests: XCTestCase {
         do {
             try await jobs.perform(.restart, row: ServiceRow(record: service, managed: current))
             XCTFail("Portübernahme muss Neustart sperren.")
-        } catch { XCTAssertTrue(error.localizedDescription.contains("belegt"), error.localizedDescription) }
+        } catch { XCTAssertTrue(error.localizedDescription.contains("in use"), error.localizedDescription) }
         let after = try XCTUnwrap(try jobs.status(service.id))
         defer { _ = try? jobs.bootout(after.run) }
         XCTAssertEqual(after.identity, state.identity)

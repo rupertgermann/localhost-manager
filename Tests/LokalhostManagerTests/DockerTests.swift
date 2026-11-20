@@ -4,10 +4,12 @@ import XCTest
 final class DockerTests: XCTestCase {
     func testInspectPreservesPublishedAddressesProtocolsAndComposeInstance() throws {
         let json = #"""
-        {"id":"123","name":"/shop-web-2","state":"running","project":"shop","service":"web","number":"2","workingDirectory":"/src/shop","oneoff":"False","ports":{"80/tcp":[{"HostIp":"0.0.0.0","HostPort":"18080"},{"HostIp":"::","HostPort":"18080"}],"53/udp":[{"HostIp":"127.0.0.1","HostPort":"1053"}],"6379/tcp":null}}
+        {"id":"123","name":"/shop-web-2","state":"running","project":"shop","service":"web","number":"2","workingDirectory":"/src/shop","containerDirectory":"/app/web","oneoff":"False","ports":{"80/tcp":[{"HostIp":"0.0.0.0","HostPort":"18080"},{"HostIp":"::","HostPort":"18080"}],"53/udp":[{"HostIp":"127.0.0.1","HostPort":"1053"}],"6379/tcp":null}}
         """#
         let container = try JSONDecoder().decode(DockerContainer.self, from: Data(json.utf8))
         XCTAssertEqual(container.name, "shop-web-2")
+        XCTAssertEqual(container.containerDirectory, "/app/web")
+        XCTAssertEqual(container.workingDirectory, "/src/shop")
         XCTAssertEqual(container.ports.map(\.description).sorted(), ["0.0.0.0:18080 → 80/tcp", "127.0.0.1:1053 → 53/udp", "[::]:18080 → 80/tcp"])
         let inventory = DockerInventory(containers: [container], available: true)
         var row = try XCTUnwrap(inventory.rows(socket: "/test.sock", catalog: Catalog(), showStopped: false).first)
@@ -15,8 +17,21 @@ final class DockerTests: XCTestCase {
         let confirmed = try XCTUnwrap(URL(string: "https://127.0.0.1:18080/app"))
         row.editableRecord.webTargets = [confirmed, try XCTUnwrap(URL(string: "http://127.0.0.1:1053"))]
         XCTAssertEqual(row.webTargets, [confirmed])
-        XCTAssertEqual(container.instanceDescription, "shop / web · Instanz 2")
+        XCTAssertEqual(container.instanceDescription, "shop / web · Instance 2")
     }
+    func testFinderPathUsesTheMostSpecificContainerMount() throws {
+        let mounts = #"[{"Type":"bind","Destination":"/app","Source":"/Users/test/My Project"},{"Type":"volume","Destination":"/app/data","Source":"/docker/volumes/data"}]"#
+        func path(_ cwd: String) throws -> String? {
+            let json = #"{"id":"abc","name":"web","state":"running","containerDirectory":"\#(cwd)","mounts":\#(mounts)}"#
+            return try JSONDecoder().decode(DockerContainer.self, from: Data(json.utf8)).mountedWorkingDirectory
+        }
+        XCTAssertEqual(try path("/app"), "/Users/test/My Project")
+        XCTAssertEqual(try path("/app/web"), "/Users/test/My Project/web")
+        XCTAssertNil(try path("/app/data/subdir"))
+        XCTAssertNil(try path("/application"))
+        XCTAssertNil(try path("/app/../etc"))
+    }
+
     func testOnlySelectedLocalSocketReachesCLIAndHungInventoryFails() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -36,11 +51,11 @@ final class DockerTests: XCTestCase {
         do {
             _ = try await cli.run(["hang"], timeout: 0.2)
             XCTFail("Hanging CLI should report its timeout")
-        } catch { XCTAssertTrue(error.localizedDescription.contains("Zeitüberschreitung")) }
+        } catch { XCTAssertTrue(error.localizedDescription.contains("timed out")) }
         do {
             _ = try await DockerCLI(socket: "tcp://remote:2375", executable: program.path).scan()
             XCTFail("Remote endpoint should be rejected before launch")
-        } catch { XCTAssertTrue(error.localizedDescription.contains("Unix-Socket")) }
+        } catch { XCTAssertTrue(error.localizedDescription.contains("Unix socket")) }
     }
 
     func testSavedInstanceTracksComposeRecreationAndKeepsRemovedStandaloneMissing() throws {
@@ -65,10 +80,10 @@ final class DockerTests: XCTestCase {
         XCTAssertEqual(saved.count, 2)
         XCTAssertEqual(saved.compactMap { $0.current?.id }, ["replacement"])
         XCTAssertTrue(saved.allSatisfy { $0.projectID == projectID })
-        XCTAssertTrue(saved.contains { $0.status == "Container fehlt" })
+        XCTAssertTrue(saved.contains { $0.status == "Container missing" })
         inventory.available = false
         let unknown = inventory.rows(socket: socket, catalog: catalog, showStopped: false)
-        XCTAssertTrue(unknown.allSatisfy { $0.status == "Unbekannt" && $0.current == nil })
+        XCTAssertTrue(unknown.allSatisfy { $0.status == "Unknown" && $0.current == nil })
     }
     func testManualMappingDuringDuplicateReplicaSurvivesOnlyWithSelectedID() throws {
         func replica(_ id: String) throws -> DockerContainer {

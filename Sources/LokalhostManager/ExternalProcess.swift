@@ -5,13 +5,13 @@ enum ExternalProcess {
     static func stop(_ listener: LocalListener) async throws {
         if let error = listener.controlError { throw ManagerError(error) }
         guard let identity = listener.identity, let executable = listener.executable else {
-            throw ManagerError("Keine Berechtigung oder keine bestätigte Identität für diesen Prozess.")
+            throw ManagerError("Permission denied or the process identity could not be verified.")
         }
         let fresh = try await ListenerInventory.currentListeners()
         guard let current = fresh.first(where: { $0.identity == identity }),
               current.controlError == nil, current.executable == executable,
               !listener.bindings.isEmpty, Set(current.bindings) == Set(listener.bindings) else {
-            throw ManagerError("Prozess oder Bindungen haben sich geändert. Bitte den aktuellen Dienst auswählen.")
+            throw ManagerError("The process or its bindings have changed. Select the current service.")
         }
         try terminate(identity, executable: executable)
 
@@ -24,20 +24,20 @@ enum ExternalProcess {
                 candidate.bindings.contains { binding in listener.bindings.contains(where: binding.overlaps) }
             }
             if let other = owners.first(where: { $0.identity != identity }) {
-                throw ManagerError("Port weiterhin belegt durch \(other.name) (PID \(other.pid)).")
+                throw ManagerError("Port still in use by \(other.name) (PID \(other.pid)).")
             }
             if owners.isEmpty && ProcessIdentity.read(identity.pid) != identity {
                 if let quietSince, ContinuousClock.now - quietSince >= .milliseconds(650) { return }
                 if quietSince == nil { quietSince = .now }
             } else { quietSince = nil }
         } while ContinuousClock.now < deadline
-        throw ManagerError("Beendigung nicht bestätigt. Der Prozess läuft noch oder der Port ist weiterhin belegt.")
+        throw ManagerError("Could not confirm the stop. The process is still running or the port is still in use.")
     }
 
     private static func terminate(_ identity: ProcessIdentity, executable: String) throws {
         var task: mach_port_name_t = 0
         guard task_name_for_pid(mach_task_self_, identity.pid, &task) == KERN_SUCCESS else {
-            throw ManagerError("Keine Berechtigung, die Prozessidentität für das Stoppen zu bestätigen.")
+            throw ManagerError("Permission denied while verifying the process to stop.")
         }
         defer { mach_port_deallocate(mach_task_self_, task) }
         var token = audit_token_t()
@@ -47,11 +47,11 @@ enum ExternalProcess {
         }
         guard result == KERN_SUCCESS, ProcessIdentity.read(identity.pid) == identity,
               ProcessIdentity.executable(of: identity.pid) == executable else {
-            throw ManagerError("Die Prozessidentität hat sich geändert oder lässt sich nicht bestätigen.")
+            throw ManagerError("The process identity changed or could not be verified.")
         }
         // Das Audit-Token bindet SIGTERM auch bei sofortiger PID-Wiederverwendung an diesen Prozess.
         guard proc_signal_with_audittoken(&token, SIGTERM) == 0 else {
-            throw ManagerError("Stoppen fehlgeschlagen: \(String(cString: strerror(errno))).")
+            throw ManagerError("Could not stop the process: \(String(cString: strerror(errno))).")
         }
     }
 }

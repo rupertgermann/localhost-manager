@@ -75,7 +75,7 @@ struct LocalListener {
     var executable: String?
     var bindings: [HostBinding] = []
 
-    static let dockerControlError = "Docker-Portweiterleitung nur über den Container steuern."
+    static let dockerControlError = "Manage Docker port forwarding through its container."
 
     static func isDockerForwarder(_ executable: String?) -> Bool {
         executable?.hasSuffix("/Docker.app/Contents/MacOS/com.docker.backend") == true
@@ -84,7 +84,7 @@ struct LocalListener {
     var controlError: String? {
         if Self.isDockerForwarder(executable) { return Self.dockerControlError }
         guard executable != nil, let identity, identity.pid == pid, pid > 1, pid != getpid(), identity.uid == geteuid() else {
-            return "Keine Berechtigung oder keine bestätigte Identität für diesen Prozess."
+            return "Permission denied or the process identity could not be verified."
         }
         return nil
     }
@@ -109,7 +109,7 @@ struct ListenerInventory {
     var visibility: Visibility = .current
 
     func requireCurrent() throws {
-        guard visibility == .current else { throw ManagerError(warning ?? "Listenerbestand nicht bestätigt.") }
+        guard visibility == .current else { throw ManagerError(warning ?? "Could not verify the listener inventory.") }
     }
 
     static func currentListeners() async throws -> [LocalListener] {
@@ -131,7 +131,7 @@ struct ListenerInventory {
         process.waitUntilExit()
         let diagnostic = String(decoding: await stderr.value, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
         guard process.terminationStatus == 0 || (process.terminationStatus == 1 && (diagnostic.isEmpty || !data.isEmpty)) else {
-            throw ManagerError("Listener konnten nicht gelesen werden. " + diagnostic)
+            throw ManagerError("Could not read the TCP listeners. " + diagnostic)
         }
 
         var listeners: [LocalListener] = []
@@ -147,7 +147,7 @@ struct ListenerInventory {
                 let directory = proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, 0, &cwd, size) == size
                     ? withUnsafeBytes(of: &cwd.pvi_cdir.vip_path) { String(decoding: $0.prefix(while: { $0 != 0 }), as: UTF8.self) } : nil
                 let executable = ProcessIdentity.executable(of: pid)
-                listeners.append(LocalListener(pid: pid, name: "Prozess \(pid)", identity: ProcessIdentity.read(pid), directory: directory.map(physicalDirectory), executable: executable))
+                listeners.append(LocalListener(pid: pid, name: "Process \(pid)", identity: ProcessIdentity.read(pid), directory: directory.map(physicalDirectory), executable: executable))
             case 99 where !listeners.isEmpty: listeners[listeners.count - 1].name = value // c
             case 102: family = "" // f
             case 116: family = value // t
@@ -162,9 +162,9 @@ struct ListenerInventory {
         }
         listeners.removeAll { $0.bindings.isEmpty }
         let incomplete = listeners.contains { $0.directory == nil || $0.identity == nil || $0.executable == nil }
-        let warning = !diagnostic.isEmpty ? diagnostic : incomplete ? "Bei einigen Prozessen fehlen Angaben zu Identität, Programm oder Ordner." : nil
+        let warning = !diagnostic.isEmpty ? diagnostic : incomplete ? "Some processes have incomplete identity, executable or directory information." : nil
         let partial = !diagnostic.isEmpty || (process.terminationStatus != 0 && !data.isEmpty)
-        return Self(listeners: listeners, warning: warning ?? (partial ? "Listenerbestand unvollständig." : nil),
+        return Self(listeners: listeners, warning: warning ?? (partial ? "The listener inventory is incomplete." : nil),
                     visibility: partial ? .partial : .current)
     }
 }

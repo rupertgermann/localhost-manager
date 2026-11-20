@@ -2,6 +2,31 @@ import XCTest
 @testable import LokalhostManager
 
 final class CatalogTests: XCTestCase {
+    func testCategoryFollowsTheProcessRatherThanTheSavedLabel() {
+        let saved = ServiceRecord(name: "Python API", executable: "/opt/homebrew/bin/node")
+        let cases: [(LocalListener?, ProcessCategory)] = [
+            (nil, .node),
+            (LocalListener(pid: 10, name: "next-server (v16.0.0)", executable: "/usr/local/bin/node"), .node),
+            (LocalListener(pid: 11, name: "python3.13"), .python),
+            (LocalListener(pid: 12, name: "redis-server"), .database),
+            (LocalListener(pid: 13, name: "com.docker.backend"), .docker),
+            (LocalListener(pid: 14, name: "my-node-tools"), .other)
+        ]
+        for (listener, expected) in cases {
+            XCTAssertEqual(ServiceRow(record: saved, listener: listener).category, expected)
+        }
+    }
+
+    func testListDistinguishesSameNamedProcessesByTheirWorkingDirectory() {
+        let first = LocalListener(pid: 10, name: "node", directory: "/projects/frontend")
+        let second = LocalListener(pid: 11, name: "node", directory: "/projects/api")
+        let hidden = LocalListener(pid: 12, name: "node")
+        let rows = Catalog().rows(for: [first, second, hidden])
+        XCTAssertEqual(rows.first { $0.listener?.pid == 10 }?.workingDirectories, ["/projects/frontend"])
+        XCTAssertEqual(rows.first { $0.listener?.pid == 11 }?.workingDirectories, ["/projects/api"])
+        XCTAssertEqual(rows.first { $0.listener?.pid == 12 }?.workingDirectories, [])
+    }
+
     func testExistingProjectAndServiceUseTheSamePhysicalDirectoryAsTheListener() throws {
         let name = "lokalhost-path-" + UUID().uuidString
         let folder = URL(fileURLWithPath: "/private/tmp/" + name)

@@ -2,13 +2,31 @@ import Darwin
 import Foundation
 
 enum WebTarget {
+    static func browserURL(for binding: HostBinding, saved: [URL], containerPort: String? = nil) -> URL? {
+        guard (1...65535).contains(binding.port),
+              containerPort == nil || containerPort?.hasSuffix("/tcp") == true else { return nil }
+        if let url = saved.first(where: { accepts($0, on: [binding]) }) { return url }
+        var host = binding.host.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        if ["*", "0.0.0.0", "::"].contains(host) {
+            host = binding.family == "IPv6" ? "::1" : "127.0.0.1"
+        }
+        var v4 = in_addr(), v6 = in6_addr()
+        let address = host.components(separatedBy: "%")[0]
+        guard inet_pton(AF_INET, host, &v4) == 1 || inet_pton(AF_INET6, address, &v6) == 1 else { return nil }
+        var parts = URLComponents()
+        parts.scheme = binding.port == 443 || containerPort == "443/tcp" ? "https" : "http"
+        parts.host = host.contains(":") ? "[\(host)]" : host
+        parts.port = binding.port
+        return parts.url
+    }
+
     static func confirmed(_ text: String, existing: [URL], bindings: [HostBinding]) throws -> [URL] {
         var urls: [URL] = []
         for line in text.split(whereSeparator: \.isNewline) {
             let address = line.trimmingCharacters(in: .whitespacesAndNewlines)
             if address.isEmpty { continue }
             guard let url = URL(string: address), existing.contains(url) || accepts(url, on: bindings) else {
-                throw ManagerError("Webziel benötigt eine lokale HTTP(S)-Adresse mit einem aktiven Host-Port.")
+                throw ManagerError("Enter a local HTTP or HTTPS address with an active host port.")
             }
             if !urls.contains(url) { urls.append(url) }
         }

@@ -12,13 +12,13 @@ struct ManagedLogsButton: View {
             .sheet(isPresented: $showing) {
                 VStack(alignment: .leading, spacing: 14) {
                     Text("Logs · \(name)").font(.title2.bold())
-                    Picker("Ausgabe", selection: $stderr) { Text("stdout").tag(false); Text("stderr").tag(true) }
+                    Picker("Output", selection: $stderr) { Text("stdout").tag(false); Text("stderr").tag(true) }
                         .pickerStyle(.segmented)
                     let path = ManagedJobs(directory: store.dataDirectory).log(run, stderr: stderr).path
                     FileLogContents(path: path).id(path)
                     HStack {
                         Spacer()
-                        Button("Schließen") { showing = false }.keyboardShortcut(.cancelAction)
+                        Button("Close") { showing = false }.keyboardShortcut(.cancelAction)
                     }
                 }.padding(20).frame(width: 620, height: 410)
             }

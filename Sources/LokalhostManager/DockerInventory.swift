@@ -33,16 +33,16 @@ struct DockerRow: Identifiable {
     var id: DockerKey { editableRecord.key }
     var current: DockerContainer? { available ? container : nil }
     var status: String {
-        guard available else { return "Unbekannt" }
+        guard available else { return "Unknown" }
         switch container?.state {
-        case nil: return "Container fehlt"
-        case "running": return "Läuft"
-        case "paused": return "Pausiert"
-        case "restarting": return "Startet neu"
-        case "exited", "created": return "Gestoppt"
-        case "dead": return "Defekt"
-        case "removing": return "Wird entfernt"
-        default: return container?.state ?? "Unbekannt"
+        case nil: return "Container missing"
+        case "running": return "Running"
+        case "paused": return "Paused"
+        case "restarting": return "Restarting"
+        case "exited", "created": return "Stopped"
+        case "dead": return "Failed"
+        case "removing": return "Removing"
+        default: return container?.state ?? "Unknown"
         }
     }
 
@@ -111,9 +111,9 @@ enum DockerAction: String, CaseIterable {
 
     var title: String {
         switch self {
-        case .start: return "Starten"
-        case .stop: return "Stoppen"
-        case .restart: return "Neu starten"
+        case .start: return "Start"
+        case .stop: return "Stop"
+        case .restart: return "Restart"
         }
     }
 
@@ -154,15 +154,15 @@ final class DockerStore: ObservableObject {
     func perform(_ action: DockerAction, on row: DockerRow) async throws {
         guard inventory.available, row.editableRecord.socket == cli.socket, let target = row.current,
               inventory.containers.contains(where: { $0.id == target.id }) else {
-            throw ManagerError("Container nicht verfügbar. Bestand aktualisieren.")
+            throw ManagerError("Container unavailable. Refresh the list and try again.")
         }
-        guard busy.insert(target.id).inserted else { throw ManagerError("Für diesen Container läuft bereits eine Aktion.") }
+        guard busy.insert(target.id).inserted else { throw ManagerError("Another action is in progress for this container.") }
         defer { busy.remove(target.id) }
         do {
             guard DockerCLI.isFullID(target.id),
                   let current = try await cli.inspect([target.id]).first,
                   inventory.available, current.id == target.id, action.accepts(current.state) else {
-                throw ManagerError("Die gewählte Containerinstanz oder ihr Zustand hat sich geändert.")
+                throw ManagerError("The selected container or its state has changed.")
             }
             _ = try await cli.run(["container", action.rawValue, target.id], timeout: 60)
         } catch {

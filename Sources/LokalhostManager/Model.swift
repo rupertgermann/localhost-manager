@@ -35,6 +35,15 @@ struct ServiceRow: Identifiable {
     var projectID: UUID?
 
     var managed: ManagedStatus?
+    var workingDirectories: [String] {
+        if let managed, managed.isRunning {
+            let paths = Set(managed.listeners.compactMap(\.directory))
+            if !paths.isEmpty { return paths.sorted() }
+        }
+        if let listener { return listener.directory.map { [$0] } ?? [] }
+        return record?.directory.map { [$0] } ?? []
+    }
+
     var bindings: [HostBinding] {
         if let managed, managed.isRunning { return managed.listeners.flatMap(\.bindings).reduce(into: []) { if !$0.contains($1) { $0.append($1) } } }
         return listener?.bindings ?? []
@@ -53,7 +62,7 @@ struct ServiceRow: Identifiable {
         guard let listener else { return "" }
         return "pid-\(listener.pid)-\(listener.identity?.seconds ?? 0)-\(listener.identity?.microseconds ?? 0)"
     }
-    var name: String { record?.name ?? listener?.name ?? "Unbekannt" }
+    var name: String { record?.name ?? listener?.name ?? "Unknown" }
     var editableRecord: ServiceRecord {
         record ?? ServiceRecord(name: name, directory: listener?.directory, executable: listener?.executable, lastIdentity: listener?.identity)
     }
@@ -77,6 +86,12 @@ struct Catalog: Codable {
             catalog.docker = catalog.docker?.map { record in
                 var entry = record
                 entry.directory = entry.directory.map(physicalDirectory)
+                if entry.instance == "Einzelcontainer" {
+                    entry.instance = "Standalone container"
+                } else {
+                    entry.instance = entry.instance.replacingOccurrences(of: " · Instanz ", with: " · Instance ")
+                        .replacingOccurrences(of: " · Einmallauf", with: " · One-off")
+                }
                 return entry
             }
             return catalog

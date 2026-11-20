@@ -11,11 +11,11 @@ struct ProjectEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Projekt anlegen").font(.title2.bold())
+            Text("Add Project").font(.title2.bold())
             TextField("Name", text: $name)
             HStack {
-                TextField("Ordner", text: $directory)
-                Button("Auswählen …") {
+                TextField("Folder", text: $directory)
+                Button("Choose…") {
                     let panel = NSOpenPanel()
                     panel.canChooseDirectories = true
                     panel.canChooseFiles = false
@@ -25,8 +25,8 @@ struct ProjectEditor: View {
             if !error.isEmpty { Text(error).foregroundStyle(.red) }
             HStack {
                 Spacer()
-                Button("Abbrechen") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Anlegen") { Task { await create() } }.keyboardShortcut(.defaultAction)
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Create") { Task { await create() } }.keyboardShortcut(.defaultAction)
                     .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || directory.isEmpty || saving)
             }
         }.textFieldStyle(.roundedBorder).padding(24).frame(width: 460)
@@ -41,7 +41,7 @@ struct ProjectEditor: View {
             let folder = try await Task.detached {
                 var isDirectory: ObjCBool = false
                 guard path.hasPrefix("/"), FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue else {
-                    throw ManagerError("Bitte einen vorhandenen Projektordner wählen.")
+                    throw ManagerError("Choose an existing project folder.")
                 }
                 return physicalDirectory(path)
             }.value
@@ -71,39 +71,39 @@ struct ServiceEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Dienst bearbeiten").font(.title2.bold())
-            LabeledContent("Dienstname") { TextField("Dienstname", text: $record.name).labelsHidden() }
-            Picker("Projekt", selection: $record.projectID) {
-                Text("Automatisch zuordnen").tag(UUID?.none)
+            Text("Edit Service").font(.title2.bold())
+            LabeledContent("Service name") { TextField("Service name", text: $record.name).labelsHidden() }
+            Picker("Project", selection: $record.projectID) {
+                Text("Assign automatically").tag(UUID?.none)
                 ForEach(store.catalog.projects) { project in Text(project.name).tag(Optional(project.id)) }
             }
             if !row.bindings.isEmpty {
-                LabeledContent("Aktive Bindungen", value: row.bindings.map(\.description).joined(separator: "\n"))
+                LabeledContent("Active bindings", value: row.bindings.map(\.description).joined(separator: "\n"))
             }
-            LabeledContent("Arbeitsordner") { TextField("Arbeitsordner", text: field(\.directory)).labelsHidden() }
-            LabeledContent("Startbefehl") { TextField("Startbefehl", text: field(\.startCommand)).labelsHidden() }
-            Text("Der bestätigte Befehl läuft mit /bin/sh. Projektprogramme können mit ihrem Pfad angegeben werden.")
+            LabeledContent("Working directory") { TextField("Working directory", text: field(\.directory)).labelsHidden() }
+            LabeledContent("Start command") { TextField("Start command", text: field(\.startCommand)).labelsHidden() }
+            Text("The confirmed command runs in /bin/sh. Use a path to run a project-specific executable.")
                 .font(.caption).foregroundStyle(.secondary)
-            LabeledContent("Env-Datei (optional)") { TextField("Env-Datei (optional)", text: field(\.envFile)).labelsHidden() }
+            LabeledContent("Environment file (optional)") { TextField("Environment file (optional)", text: field(\.envFile)).labelsHidden() }
             HStack {
-                TextField("Logdatei", text: Binding(get: { record.logPath ?? "" }, set: { record.logPath = $0.isEmpty ? nil : $0 }))
-                    .accessibilityLabel("Logdatei")
-                Button("Datei auswählen …") {
+                TextField("Log file", text: Binding(get: { record.logPath ?? "" }, set: { record.logPath = $0.isEmpty ? nil : $0 }))
+                    .accessibilityLabel("Log file")
+                Button("Choose File…") {
                     let panel = NSOpenPanel()
                     if panel.runModal() == .OK { record.logPath = panel.url?.path }
                 }
             }
             VStack(alignment: .leading, spacing: 5) {
-                Text("Webziele").font(.headline)
-                Text("Pro Zeile eine lokale HTTP- oder HTTPS-Adresse mit aktivem Host-Port.").font(.callout).foregroundStyle(.secondary)
-                TextEditor(text: $targets).font(.system(.body, design: .monospaced)).accessibilityLabel("Webziele")
+                Text("Web addresses").font(.headline)
+                Text("Enter one local HTTP or HTTPS address per line, using an active host port.").font(.callout).foregroundStyle(.secondary)
+                TextEditor(text: $targets).font(.system(.body, design: .monospaced)).accessibilityLabel("Web addresses")
                     .frame(height: 76).border(.quaternary)
             }
             if !error.isEmpty { Text(error).foregroundStyle(.red) }
             HStack {
                 Spacer()
-                Button("Abbrechen") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Speichern") { Task { await save() } }.keyboardShortcut(.defaultAction)
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Save") { Task { await save() } }.keyboardShortcut(.defaultAction)
                     .disabled(saving || record.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }.textFieldStyle(.roundedBorder).padding(24).frame(width: 520)
@@ -127,11 +127,11 @@ struct ServiceEditor: View {
             }
             if let path = edited.envFile { edited.envFile = (path as NSString).expandingTildeInPath }
             if edited.startCommand != nil, edited.directory?.hasPrefix("/") != true {
-                throw ManagerError("Ein Startprofil benötigt einen absoluten Arbeitsordner.")
+                throw ManagerError("The start profile needs an absolute working directory.")
             }
             if let path = edited.logPath {
                 let expanded = (path as NSString).expandingTildeInPath
-                guard expanded.hasPrefix("/") else { throw ManagerError("Bitte einen absoluten Pfad zur Logdatei angeben.") }
+                guard expanded.hasPrefix("/") else { throw ManagerError("Enter an absolute path to the log file.") }
                 edited.logPath = expanded
             }
             edited.webTargets = try WebTarget.confirmed(targets, existing: record.webTargets, bindings: bindings)

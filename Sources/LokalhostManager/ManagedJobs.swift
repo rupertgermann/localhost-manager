@@ -18,9 +18,9 @@ struct ManagedStatus {
 
     var isRunning: Bool { identity != nil }
     var description: String {
-        if isRunning { return "Läuft" }
-        if let exitCode { return exitCode == 0 ? "Beendet" : "Fehler (\(exitCode))" }
-        return "Gestoppt"
+        if isRunning { return "Running" }
+        if let exitCode { return exitCode == 0 ? "Exited" : "Error (\(exitCode))" }
+        return "Stopped"
     }
 
     func owns(_ listener: LocalListener) -> Bool {
@@ -40,9 +40,9 @@ struct ManagedStatus {
 }
 
 enum ServiceAction: String {
-    case start = "Startet …"
-    case stop = "Stoppt …"
-    case restart = "Startet neu …"
+    case start = "Starting…"
+    case stop = "Stopping…"
+    case restart = "Restarting…"
 }
 
 struct ManagedJobs {
@@ -76,7 +76,7 @@ struct ManagedJobs {
         do { bytes = try Data(contentsOf: folder(service).appendingPathComponent("current.json")) }
         catch let error as CocoaError where error.code == .fileReadNoSuchFile { return nil }
         let run = try JSONDecoder().decode(ManagedRun.self, from: bytes)
-        guard run.serviceID == service else { throw ManagerError("Lauf gehört zu einem anderen Dienst.") }
+        guard run.serviceID == service else { throw ManagerError("This run belongs to a different service.") }
         var state = try inspect(run)
         let portsFile = runFolder(run).appendingPathComponent("ports.json")
         do { state.observedBindings = try JSONDecoder().decode(Set<HostBinding>.self, from: Data(contentsOf: portsFile)) }
@@ -95,7 +95,7 @@ struct ManagedJobs {
     private func inspect(_ run: ManagedRun) throws -> ManagedStatus {
         let (code, output) = try launchctl(["print", "\(domain)/\(run.label)"])
         if code == 113 { return ManagedStatus(run: run, identity: nil, loaded: false, exitCode: nil) }
-        guard code == 0 else { throw ManagerError("launchd-Zustand nicht lesbar (Code \(code)).") }
+        guard code == 0 else { throw ManagerError("Could not read launchd status (code \(code)).") }
         let lines = output.components(separatedBy: "\n")
         func field(_ name: String) -> String? {
             let prefix = "\t\(name) = "
@@ -105,18 +105,18 @@ struct ManagedJobs {
         if let pid = field("pid").flatMap(pid_t.init) {
             guard let identity = ProcessIdentity.read(pid), identity.uid == getuid(),
                   run.identity == nil || run.identity == identity else {
-                throw ManagerError("Die Prozessidentität des gestarteten Laufs ist nicht bestätigt.")
+                throw ManagerError("Could not verify the identity of the running process.")
             }
             root = identity
         } else if field("state") == "running" {
-            throw ManagerError("launchd meldet einen laufenden Job ohne bestätigte Prozessidentität.")
+            throw ManagerError("launchd reports a running job without a verified process identity.")
         }
         return ManagedStatus(run: run, identity: root, loaded: true, exitCode: field("last exit code").flatMap(Int.init))
     }
 
     func bootout(_ run: ManagedRun) throws {
         let (code, _) = try launchctl(["bootout", "\(domain)/\(run.label)"])
-        guard code == 0 || code == 113 else { throw ManagerError("launchd konnte den eigenen Job nicht entfernen (Code \(code)).") }
+        guard code == 0 || code == 113 else { throw ManagerError("launchd could not remove this job (code \(code)).") }
     }
 
     private func save(_ run: ManagedRun) throws {
@@ -126,30 +126,30 @@ struct ManagedJobs {
     func perform(_ action: ServiceAction, row: ServiceRow, services: [ServiceRecord] = []) async throws {
         if let error = row.controlError { throw ManagerError(error) }
         guard let service = row.record else {
-            guard action == .stop, let listener = row.listener else { throw ManagerError("Kein bestätigtes Startprofil.") }
+            guard action == .stop, let listener = row.listener else { throw ManagerError("No confirmed start profile.") }
             try await ExternalProcess.stop(listener)
             return
         }
         let home = folder(service.id)
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let lock = open(home.appendingPathComponent("action.lock").path, O_CREAT | O_RDWR, 0o600)
-        guard lock >= 0 else { throw ManagerError("Aktionssperre konnte nicht geöffnet werden.") }
+        guard lock >= 0 else { throw ManagerError("Could not acquire the action lock.") }
         defer { close(lock) }
-        guard flock(lock, LOCK_EX | LOCK_NB) == 0 else { throw ManagerError("Eine Aktion für diesen Dienst läuft bereits.") }
+        guard flock(lock, LOCK_EX | LOCK_NB) == 0 else { throw ManagerError("Another action is in progress for this service.") }
         let guardFile = home.appendingPathComponent("predecessor.json")
         let listeners = try await ListenerInventory.currentListeners()
         let state = try status(service.id, listeners: listeners)
         let configuration = action == .stop ? nil : try configuration(for: service)
         let predecessor: Predecessor
         if action == .start {
-            guard state?.isRunning != true else { throw ManagerError("Dieser Dienst läuft bereits.") }
+            guard state?.isRunning != true else { throw ManagerError("This service is already running.") }
             predecessor = try previousExecution(service, state, listeners, services: services, file: guardFile)
         } else if let shown = row.managed, shown.isRunning {
             predecessor = try await stopManaged(shown, current: state, listeners: listeners, file: guardFile)
         } else {
             guard state?.isRunning != true, let listener = row.listener, let identity = listener.identity,
                   action == .stop || identity == service.lastIdentity else {
-                throw ManagerError("Die Identität ist unklar. Bitte den aktuellen Dienst erneut bestätigen.")
+                throw ManagerError("The process identity is unclear. Confirm the current service again.")
             }
             predecessor = try await stopExternal(listener, identity, restarting: action == .restart, file: guardFile)
         }
@@ -168,7 +168,7 @@ struct ManagedJobs {
         }
         if let identity = service.lastIdentity { previous.processes.insert(identity) }
         if let adopted = service.externalSupervisor, ProcessIdentity.read(adopted.pid) == adopted {
-            throw ManagerError("Der übergeordnete Starter oder Watcher läuft noch.")
+            throw ManagerError("The parent process or watcher is still running.")
         }
         previous.ports.formUnion(service.externalPorts ?? [])
         previous.ports.formUnion(state?.observedBindings ?? [])
@@ -186,7 +186,7 @@ struct ManagedJobs {
                 }
             }
             if !candidates.isEmpty {
-                throw ManagerError("Im Projekt läuft ein passender externer Dienst. Bitte zuerst seine Identität bestätigen.")
+                throw ManagerError("A matching external service is running in this project. Confirm its identity first.")
             }
         }
         return previous
@@ -194,14 +194,14 @@ struct ManagedJobs {
 
     private func stopManaged(_ shown: ManagedStatus, current state: ManagedStatus?, listeners: [LocalListener], file: URL) async throws -> Predecessor {
         guard let state, let root = state.identity, root == shown.identity, shown.run.id == state.run.id else {
-            throw ManagerError("Der angezeigte Lauf hat sich geändert.")
+            throw ManagerError("The displayed run has changed.")
         }
         if state.listeners.contains(where: { LocalListener.isDockerForwarder($0.executable) }) {
             throw ManagerError(LocalListener.dockerControlError)
         }
         for listener in shown.listeners {
             guard state.listeners.contains(where: { $0.identity == listener.identity && Set($0.bindings) == Set(listener.bindings) }) else {
-                throw ManagerError("Der Listener oder seine Bindungen haben sich geändert.")
+                throw ManagerError("The listener or its bindings have changed.")
             }
         }
         let owned = Set(state.listeners.compactMap(\.identity))
@@ -214,7 +214,7 @@ struct ManagedJobs {
         while previous.hasLiveProcesses, ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(100))
         }
-        guard !(try inspect(state.run)).loaded else { throw ManagerError("launchd hat den vorherigen Lauf noch nicht entfernt.") }
+        guard !(try inspect(state.run)).loaded else { throw ManagerError("launchd has not yet removed the previous run.") }
         return previous
     }
 
@@ -231,18 +231,18 @@ struct ManagedJobs {
     private func configuration(for service: ServiceRecord) throws -> [String: Any] {
         guard let path = service.directory, path.hasPrefix("/"),
               let command = service.startCommand, !command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw ManagerError("Arbeitsordner und Startbefehl müssen bestätigt sein.")
+            throw ManagerError("Confirm the working directory and start command.")
         }
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue else {
-            throw ManagerError("Arbeitsordner fehlt: \(path)")
+            throw ManagerError("Working directory not found: \(path)")
         }
         var env = ["PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"]
         if let envFile = service.envFile, !envFile.isEmpty {
             let url = URL(fileURLWithPath: envFile, relativeTo: URL(fileURLWithPath: path, isDirectory: true))
             let data: String
             do { data = try String(contentsOf: url, encoding: .utf8) }
-            catch { throw ManagerError("Env-Datei fehlt, ist nicht lesbar oder nicht in UTF-8: \(url.path)") }
+            catch { throw ManagerError("Environment file missing, unreadable or not UTF-8: \(url.path)") }
             env.merge(try ManagedEnvironment.parse(data)) { _, custom in custom }
         }
 
@@ -265,9 +265,9 @@ struct ManagedJobs {
         defer { try? fm.removeItem(at: plist) }
         try save(run) // Write the label before launchd can start a process, including on app termination.
         let (bootstrap, _) = try launchctl(["bootstrap", domain, plist.path])
-        guard bootstrap == 0 else { throw ManagerError("launchd konnte den Benutzerjob nicht laden (Code \(bootstrap)).") }
+        guard bootstrap == 0 else { throw ManagerError("launchd could not load the user job (code \(bootstrap)).") }
         let (kickstart, output) = try launchctl(["kickstart", "-p", "\(domain)/\(run.label)"])
-        guard kickstart == 0 else { throw ManagerError("launchd konnte den Dienst nicht starten (Code \(kickstart)).") }
+        guard kickstart == 0 else { throw ManagerError("launchd could not start the service (code \(kickstart)).") }
         if let pid = pid_t(output.trimmingCharacters(in: .whitespacesAndNewlines)),
            let identity = ProcessIdentity.read(pid), identity.uid == getuid() {
             run.identity = identity
@@ -276,8 +276,8 @@ struct ManagedJobs {
         Thread.sleep(forTimeInterval: 0.35)
         let state = try inspect(run)
         if let code = state.exitCode, !state.isRunning, code != 0 {
-            let reason = code == 127 ? "Programm nicht gefunden" : code == 126 ? "Programm nicht ausführbar" : "Befehl vorzeitig beendet"
-            throw ManagerError("Startfehler: \(reason) (Exit-Code \(code)).")
+            let reason = code == 127 ? "Program not found" : code == 126 ? "Program is not executable" : "Command exited early"
+            throw ManagerError("Start failed: \(reason) (exit code \(code)).")
         }
     }
 }

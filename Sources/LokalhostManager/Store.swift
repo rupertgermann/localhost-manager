@@ -34,7 +34,7 @@ final class AppStore: ObservableObject {
             }.value
             ready = true
         } catch {
-            message = "Gespeicherte Dienste konnten nicht geladen werden. \(error.localizedDescription)"
+            message = "Could not load saved services. \(error.localizedDescription)"
         }
         await refresh()
     }
@@ -82,7 +82,7 @@ final class AppStore: ObservableObject {
     }
 
     func save(_ next: Catalog) async throws {
-        guard ready, !saving else { throw ManagerError("Die Projektdatei ist zurzeit nicht beschreibbar.") }
+        guard ready, !saving else { throw ManagerError("The project file cannot be written right now.") }
         saving = true
         defer { saving = false }
         let directory = dataDirectory

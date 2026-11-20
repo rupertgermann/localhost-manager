@@ -51,7 +51,7 @@ final class ExternalProcessTests: XCTestCase {
             try await ExternalProcess.stop(target)
             XCTFail("Watcher still owns the port")
         } catch {
-            XCTAssertTrue(error.localizedDescription.contains("weiterhin belegt"), error.localizedDescription)
+            XCTAssertTrue(error.localizedDescription.contains("still in use"), error.localizedDescription)
         }
         let replacement = try await watcher.value
         defer { replacement.close() }
@@ -59,7 +59,7 @@ final class ExternalProcessTests: XCTestCase {
             try await ExternalProcess.stop(target)
             XCTFail("A stale stop must fail")
         } catch {
-            XCTAssertTrue(error.localizedDescription.contains("geändert"), error.localizedDescription)
+            XCTAssertTrue(error.localizedDescription.contains("changed"), error.localizedDescription)
         }
         XCTAssertTrue(replacement.process.isRunning)
     }
@@ -75,7 +75,7 @@ final class ExternalProcessTests: XCTestCase {
         do {
             try await jobs.perform(.restart, row: ServiceRow(record: record, listener: listener))
             XCTFail("Der externe Starter läuft noch.")
-        } catch { XCTAssertTrue(error.localizedDescription.contains("Watcher"), error.localizedDescription) }
+        } catch { XCTAssertTrue(error.localizedDescription.contains("watcher"), error.localizedDescription) }
         XCTAssertTrue(fixture.process.isRunning)
         XCTAssertNil(try jobs.status(record.id))
     }
