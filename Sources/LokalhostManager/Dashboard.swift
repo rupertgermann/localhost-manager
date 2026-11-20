@@ -10,6 +10,7 @@ struct Dashboard: View {
     @State private var filter = ""
     @State private var selectedCategory: ProcessCategory?
     @State private var systemServices = false
+    @State private var showingSettings = false
     @State private var creatingProject = false
     @State private var editing: ServiceRow?
     @State private var dockerLogs: DockerContainer?
@@ -18,9 +19,13 @@ struct Dashboard: View {
         let isDark = darkMode ?? (colorScheme == .dark)
         let appearanceAction = isDark ? "Switch to Light Mode" : "Switch to Dark Mode"
         let listeners = docker.inventory.nativeListeners(store.inventory.listeners)
-        let localRows = store.catalog.rows(for: listeners, managed: store.managed)
-            .filter { systemServices || $0.listener?.isSystem != true }
+        let detectedRows = store.catalog.rows(for: listeners, managed: store.managed)
+        let localRows = detectedRows.filter { row in
+            (systemServices || row.listener?.isSystem != true) &&
+                !store.catalog.hides(name: row.name, ports: row.bindings.map(\.port))
+        }
         let dockerRows = docker.inventory.rows(socket: docker.cli.socket, catalog: store.catalog, showStopped: showStopped)
+            .filter { !store.catalog.hides(name: $0.editableRecord.name, ports: $0.container?.ports.map(\.host.port) ?? []) }
         let categories = Set(localRows.map(\.category)).union(dockerRows.isEmpty ? [] : [.docker])
         let rows = localRows.filter(matches)
         let containers = dockerRows.filter { row in
@@ -41,6 +46,12 @@ struct Dashboard: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
+                Button { showingSettings = true } label: {
+                    Label("Settings", systemImage: "gearshape").labelStyle(.iconOnly)
+                }
+                .accessibilityLabel("Settings")
+                .help("Settings")
+                .keyboardShortcut(",", modifiers: .command)
                 Button {
                     darkMode = !isDark
                 } label: {
@@ -109,6 +120,11 @@ struct Dashboard: View {
         }
         .frame(minWidth: 780, minHeight: 440)
         .preferredColorScheme(darkMode.map { $0 ? .dark : .light })
+        .sheet(isPresented: $showingSettings) {
+            HiddenServicesSettings(rows: detectedRows, containers: docker.inventory.rows(
+                socket: docker.cli.socket, catalog: store.catalog, showStopped: true
+            ))
+        }
         .sheet(isPresented: $creatingProject) { ProjectEditor() }
         .sheet(item: $dockerLogs) { DockerLogPanel(docker: docker, container: $0) }
         .sheet(item: $editing) { ServiceEditor(row: $0) }
@@ -175,18 +191,43 @@ struct Dashboard: View {
             Divider()
             if rows.isEmpty && containers.isEmpty { Text("No services").foregroundStyle(.secondary).padding(12) }
             ForEach(rows) { row in
-                service(row).padding(.horizontal, 12).padding(.vertical, 9)
+                HStack(spacing: 8) {
+                    service(row)
+                    hideMenu(name: row.name, ports: row.bindings.map(\.port))
+                }.padding(.horizontal, 12).padding(.vertical, 9)
                     .background { row.category.rowBackground }
                 if row.id != rows.last?.id || !containers.isEmpty { Divider() }
             }
             ForEach(containers) { row in
-                DockerServiceView(docker: docker, row: row, showLogs: { dockerLogs = $0 }).padding(.horizontal, 12).padding(.vertical, 9)
+                HStack(spacing: 8) {
+                    DockerServiceView(docker: docker, row: row, showLogs: { dockerLogs = $0 })
+                    hideMenu(name: row.editableRecord.name, ports: row.container?.ports.map(\.host.port) ?? [])
+                }.padding(.horizontal, 12).padding(.vertical, 9)
                     .background { ProcessCategory.docker.rowBackground }
                 if row.id != containers.last?.id { Divider() }
             }
         }.background(.background)
             .clipShape(RoundedRectangle(cornerRadius: 9))
             .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(.quaternary))
+    }
+
+    private func hideMenu(name: String, ports: [Int]) -> some View {
+        Menu {
+            Button("Hide all named “\(name)”") {
+                Task { await store.setHidden(.name(name), hidden: true) }
+            }
+            ForEach(Set(ports).sorted(), id: \.self) { port in
+                Button("Hide port \(String(port))") {
+                    Task { await store.setHidden(.port(port), hidden: true) }
+                }
+            }
+        } label: {
+            Label("Hide service", systemImage: "eye.slash").labelStyle(.iconOnly)
+        }
+        .accessibilityLabel("Hide \(name)")
+        .help("Hide by name or port")
+        .fixedSize()
+        .disabled(!store.ready || store.saving)
     }
 
     private func service(_ row: ServiceRow) -> some View {

@@ -68,11 +68,28 @@ struct ServiceRow: Identifiable {
     }
 }
 
+enum HiddenServiceRule: Codable, Hashable {
+    case name(String)
+    case port(Int)
+
+    func matches(name: String, ports: [Int]) -> Bool {
+        switch self {
+        case .name(let hiddenName): name.caseInsensitiveCompare(hiddenName) == .orderedSame
+        case .port(let port): ports.contains(port)
+        }
+    }
+}
+
 struct Catalog: Codable {
     var projects: [Project] = []
     var services: [ServiceRecord] = []
 
     var docker: [DockerRecord]?
+    var hiddenServices: [HiddenServiceRule]?
+
+    func hides(name: String, ports: [Int]) -> Bool {
+        hiddenServices?.contains { $0.matches(name: name, ports: ports) } ?? false
+    }
 
     static func read(from file: URL) throws -> Self {
         do {

@@ -2,6 +2,21 @@ import XCTest
 @testable import LokalhostManager
 
 final class CatalogTests: XCTestCase {
+    func testHiddenServiceRulesPersistAndMatchExactNamesOrHostPorts() throws {
+        let old = try JSONDecoder().decode(Catalog.self, from: Data(#"{"projects":[],"services":[]}"#.utf8))
+        XCTAssertFalse(old.hides(name: "node", ports: [3000]))
+        var catalog = old
+        catalog.hiddenServices = [.name("node"), .port(3000)]
+        catalog = try JSONDecoder().decode(Catalog.self, from: JSONEncoder().encode(catalog))
+        XCTAssertTrue(catalog.hides(name: "Node", ports: [3001]))
+        XCTAssertTrue(catalog.hides(name: "python", ports: [3000, 8000]))
+        XCTAssertFalse(catalog.hides(name: "node-helper", ports: [13000]))
+
+        catalog.hiddenServices?.removeAll { $0 == .name("node") }
+        XCTAssertFalse(catalog.hides(name: "node", ports: [3001]))
+        XCTAssertTrue(catalog.hides(name: "node", ports: [3000]))
+    }
+
     func testCategoryFollowsTheProcessRatherThanTheSavedLabel() {
         let saved = ServiceRecord(name: "Python API", executable: "/opt/homebrew/bin/node")
         let cases: [(LocalListener?, ProcessCategory)] = [

@@ -7,9 +7,9 @@ final class AppStore: ObservableObject {
     @Published private(set) var inventory = ListenerInventory(listeners: [], warning: nil, visibility: .unavailable)
     @Published private(set) var refreshing = false
     @Published private(set) var ready = false
+    @Published private(set) var saving = false
     @Published var message: String?
     let dataDirectory: URL
-    private var saving = false
     @Published private(set) var managed: [UUID: ManagedStatus] = [:]
     @Published private(set) var managedErrors: [UUID: String] = [:]
     @Published private(set) var actions: [String: ServiceAction] = [:]
@@ -79,6 +79,17 @@ final class AppStore: ObservableObject {
             do { try await Task.sleep(for: .milliseconds(50)) } catch { return }
         }
         await refresh()
+    }
+
+    func setHidden(_ rule: HiddenServiceRule, hidden: Bool) async {
+        var next = catalog
+        var rules = (next.hiddenServices ?? []).filter { $0 != rule }
+        if hidden { rules.append(rule) }
+        next.hiddenServices = rules
+        do {
+            try await save(next)
+            message = nil
+        } catch { message = error.localizedDescription }
     }
 
     func save(_ next: Catalog) async throws {

@@ -1,6 +1,6 @@
 # Build a private macOS release
 
-Use macOS with Xcode installed to build both architectures. Use GitHub CLI with access to `rupertgermann/localhost-manager` to publish the release.
+Build and package the app locally on a Mac with Xcode. Use GitHub CLI with access to `rupertgermann/localhost-manager` to upload the finished archive.
 
 ## Build and verify
 
@@ -16,7 +16,7 @@ Use macOS with Xcode installed to build both architectures. Use GitHub CLI with 
    ```sh
    ./build-app.sh --arch arm64 --arch x86_64
    app="build/Localhost Manager.app"
-   lipo -verify_arch arm64 x86_64 "$app/Contents/MacOS/LokalhostManager"
+   lipo "$app/Contents/MacOS/LokalhostManager" -verify_arch arm64 x86_64
    codesign --verify --strict "$app"
    version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")"
    asset="Localhost-Manager-${version}-macOS.zip"
