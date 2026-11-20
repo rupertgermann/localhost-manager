@@ -91,6 +91,22 @@ struct Catalog: Codable {
         hiddenServices?.contains { $0.matches(name: name, ports: ports) } ?? false
     }
 
+    func write(to file: URL) throws {
+        let files = FileManager.default
+        let directory = file.deletingLastPathComponent()
+        try files.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let staging = try files.url(for: .itemReplacementDirectory, in: .userDomainMask, appropriateFor: directory, create: true)
+        defer { try? files.removeItem(at: staging) }
+        let replacement = staging.appendingPathComponent(file.lastPathComponent)
+        let bytes = try JSONEncoder().encode(self)
+        guard files.createFile(atPath: replacement.path, contents: bytes, attributes: [.posixPermissions: 0o600]) else {
+            throw ManagerError("Could not write the service catalog.")
+        }
+        guard rename(replacement.path, file.path) == 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+    }
+
     static func read(from file: URL) throws -> Self {
         do {
             var catalog = try JSONDecoder().decode(Catalog.self, from: Data(contentsOf: file))

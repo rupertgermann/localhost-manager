@@ -33,9 +33,13 @@ swift test
 open "build/Localhost Manager.app"
 ```
 
-The app stores its catalog and managed service logs under `~/Library/Application Support/Lokalhost Manager/`.
-
 See the [release guide](docs/releasing.md) to build and verify the private distribution archive.
+
+## Privacy
+
+The app keeps its service catalog and managed logs on your Mac under `~/Library/Application Support/Lokalhost Manager/`. It does not send telemetry. Docker inventory and actions use a local Unix socket. The app opens browser or Finder destinations when you choose them.
+
+Saved commands and service logs can contain credentials or other private data. Review them before sharing.
 
 ## Support
 

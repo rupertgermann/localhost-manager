@@ -35,9 +35,10 @@ struct Dashboard: View {
         }
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .center, spacing: 16) {
-                Image(systemName: "server.rack").font(.system(size: 27, weight: .medium))
-                    .foregroundStyle(.teal).frame(width: 48, height: 48)
-                    .background(.teal.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+                Image(nsImage: NSApp.applicationIconImage)
+                    .resizable().interpolation(.high)
+                    .frame(width: 56, height: 56).padding(-4)
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Local Services").font(.largeTitle.bold())
                     let serviceCount = rows.count + containers.count

@@ -96,11 +96,9 @@ final class AppStore: ObservableObject {
         guard ready, !saving else { throw ManagerError("The project file cannot be written right now.") }
         saving = true
         defer { saving = false }
-        let directory = dataDirectory
+        let file = dataDirectory.appendingPathComponent("catalog.json")
         try await Task.detached {
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-            let bytes = try JSONEncoder().encode(next)
-            try bytes.write(to: directory.appendingPathComponent("catalog.json"), options: .atomic)
+            try next.write(to: file)
         }.value
         catalog = next
     }

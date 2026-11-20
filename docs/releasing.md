@@ -20,7 +20,7 @@ Build and package the app locally on a Mac with Xcode. Use GitHub CLI with acces
    codesign --verify --strict "$app"
    version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")"
    asset="Localhost-Manager-${version}-macOS.zip"
-   ditto -c -k --sequesterRsrc --keepParent "$app" "build/$asset"
+   ditto -c -k --norsrc --keepParent "$app" "build/$asset"
    (cd build && shasum -a 256 "$asset" > "$asset.sha256")
    ```
 
@@ -32,6 +32,8 @@ Build and package the app locally on a Mac with Xcode. Use GitHub CLI with acces
    codesign --verify --strict "$unpacked/Localhost Manager.app"
    open "$unpacked/Localhost Manager.app"
    ```
+
+Inspect the ZIP's file list and scan its extracted executable for build-machine paths before uploading. Keep private planning files, local app data, signing credentials, and build diagnostics out of release assets.
 
 ## Upload to the private repository
 

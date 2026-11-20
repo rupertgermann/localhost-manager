@@ -2,6 +2,24 @@ import XCTest
 @testable import LokalhostManager
 
 final class CatalogTests: XCTestCase {
+    func testCatalogReplacesAnExistingFileWithOwnerOnlyPermissions() throws {
+        let files = FileManager.default
+        let directory = files.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try files.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o755])
+        defer { try? files.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("catalog.json")
+        let old = Catalog()
+        try JSONEncoder().encode(old).write(to: file)
+        try files.setAttributes([.posixPermissions: 0o644], ofItemAtPath: file.path)
+
+        let updated = Catalog(services: [ServiceRecord(name: "Example", startCommand: "npm run dev")])
+        try updated.write(to: file)
+
+        XCTAssertEqual(try Catalog.read(from: file).services.first?.name, "Example")
+        let attributes = try files.attributesOfItem(atPath: file.path)
+        XCTAssertEqual(attributes[.posixPermissions] as? Int, 0o600)
+    }
+
     func testHiddenServiceRulesPersistAndMatchExactNamesOrHostPorts() throws {
         let old = try JSONDecoder().decode(Catalog.self, from: Data(#"{"projects":[],"services":[]}"#.utf8))
         XCTAssertFalse(old.hides(name: "node", ports: [3000]))

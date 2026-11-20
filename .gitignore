@@ -4,3 +4,9 @@ build/
 .DS_Store
 .env
 .env.*
+/.scratch/
+/docs/wiki/
+*.p8
+*.p12
+*.mobileprovision
+*.provisionprofile
