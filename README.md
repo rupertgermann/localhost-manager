@@ -1,4 +1,4 @@
-# Localhost Manager
+# <img src="docs/images/app-icon.png" width="40" height="40" alt="" align="absmiddle"> Localhost Manager
 
 Localhost Manager is a native macOS app for discovering and managing local development services. See what's using a port, open a service in your browser, or jump to its working directory in Finder.
 
