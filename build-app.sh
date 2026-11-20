@@ -6,6 +6,7 @@ bin=$(swift build -c release "$@" --show-bin-path)
 bundle="build/Localhost Manager.app"
 mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
 cp Resources/AppIcon.icns "$bundle/Contents/Resources/"
+cp LICENSE "$bundle/Contents/Resources/"
 cp "$bin/LokalhostManager" "$bundle/Contents/MacOS/"
 cp Info.plist "$bundle/Contents/"
 codesign --force --options runtime --sign - "$bundle"

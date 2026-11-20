@@ -2,6 +2,8 @@
 
 Localhost Manager is a native macOS app for discovering and managing local development services. See what's using a port, open a service in your browser, or jump to its working directory in Finder.
 
+![Localhost Manager showing local Node.js, Python, and Docker services grouped by project](docs/images/localhost-manager.png)
+
 ## Install
 
 The private preview requires macOS 14 Sonoma or later. The release runs on Apple Silicon and Intel Macs.
@@ -34,3 +36,11 @@ open "build/Localhost Manager.app"
 The app stores its catalog and managed service logs under `~/Library/Application Support/Lokalhost Manager/`.
 
 See the [release guide](docs/releasing.md) to build and verify the private distribution archive.
+
+## Support
+
+Support development on [Patreon](https://patreon.com/rupertgermann) or [Buy Me a Coffee](https://buymeacoffee.com/rupertgermann).
+
+## License
+
+[MIT](LICENSE)
