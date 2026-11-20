@@ -1,24 +1,21 @@
-# Lokaler Markdown-Tracker
+# Issue-Tracker auf GitHub
 
-Jedes Vorhaben erhält einen Ordner unter `.scratch/<vorhaben>/`.
-Die Spezifikation liegt in `spec.md`, jedes Ticket in `issues/NN-<titel>.md`.
-Die Nummerierung beginnt bei `01`.
+Tickets und Spezifikationen sind öffentliche GitHub Issues in `rupertgermann/localhost-manager`. Verwende `gh` und gib bei den folgenden Befehlen `--repo rupertgermann/localhost-manager` an.
 
-Bei Umsetzungstickets steht der Triagewert oben in `Status:`.
-Die gültigen Werte stehen in `triage-labels.md`.
-Kommentare werden unter `## Comments` angehängt.
+## Issues
+
+- Veröffentliche Tickets und Spezifikationen mit `gh issue create --title "..." --body-file <datei>`.
+- Lies ein Ticket mit `gh issue view <nummer> --json number,title,body,labels,comments`.
+- Liste Tickets mit `gh issue list --state open` und filtere bei Bedarf mit `--label`.
+- Kommentiere mit `gh issue comment <nummer> --body-file <datei>`.
+- Setze oder entferne die [Triage-Labels](triage-labels.md) mit `gh issue edit <nummer> --add-label <label>` oder `--remove-label <label>`.
+- Dokumentiere die Lösung oder den Grund für die Schließung als Kommentar und schließe das Issue mit `gh issue close <nummer>`.
+
+**PRs as a request surface: no.**
 
 ## Wayfinder
 
-Die Entscheidungskarte liegt in `map.md`. Jedes Entscheidungsticket
-enthält seine Frage unter `## Question` und einen `Type:` aus
-`research`, `prototype`, `grilling` oder `task`.
-
-Neue Entscheidungstickets beginnen mit `Status: open`.
-`Blocked by:` nennt gegebenenfalls die Nummern der vorausgesetzten Tickets.
-Als Nächstes ist das erste offene, unbeanspruchte Ticket an der Reihe,
-dessen Voraussetzungen alle `resolved` sind.
-
-Vor Arbeitsbeginn `Assignee:` eintragen und `Status: claimed` speichern.
-Zum Abschluss die Antwort unter `## Answer` ergänzen, `Status: resolved`
-setzen und das Ticket mit Titel und Kurzfassung in der Karte verlinken.
+- Die Entscheidungskarte ist ein Issue mit dem Label `wayfinder:map`. Entscheidungstickets sind Sub-Issues und tragen je nach Typ `wayfinder:research`, `wayfinder:prototype`, `wayfinder:grilling` oder `wayfinder:task`.
+- Verknüpfe neue Sub-Issues mit `gh issue create --parent <karte>` und bestehende mit `gh issue edit <karte> --add-sub-issue <ticket>`.
+- Erfasse Abhängigkeiten mit `gh issue edit <ticket> --add-blocked-by <blocker>`. Das nächste Ticket ist in Kartenreihenfolge das erste offene, nicht zugewiesene Sub-Issue ohne offene Blocker.
+- Übernimm das Ticket mit `gh issue edit <ticket> --add-assignee @me`. Kommentiere die Entscheidung, schließe das Ticket und verlinke es mit einer Kurzfassung in der Karte.

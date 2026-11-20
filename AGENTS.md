@@ -2,7 +2,7 @@
 
 ### Issue tracker
 
-Tickets und Spezifikationen liegen als Markdown unter `.scratch/`. Siehe `docs/agents/issue-tracker.md`.
+Tickets und Spezifikationen liegen in GitHub Issues für `rupertgermann/localhost-manager`. Siehe `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
