@@ -1,4 +1,4 @@
-# Build a private macOS release
+# Build a macOS release
 
 Build and package the app locally on a Mac with Xcode. Use GitHub CLI with access to `rupertgermann/localhost-manager` to upload the finished archive.
 
@@ -35,19 +35,19 @@ Build and package the app locally on a Mac with Xcode. Use GitHub CLI with acces
 
 Inspect the ZIP's file list and scan its extracted executable for build-machine paths before uploading. Keep private planning files, local app data, signing credentials, and build diagnostics out of release assets.
 
-## Upload to the private repository
+## Publish on GitHub
 
-Push the commit and its version tag. Confirm that GitHub reports `PRIVATE` before you create the release. Keep the GitHub release as a prerelease during private testing.
+Push the commit and its version tag. Confirm that the destination is the public `rupertgermann/localhost-manager` repository before you create a public release.
 
 ```sh
 repo="rupertgermann/localhost-manager"
 tag="v$version"
-gh repo view "$repo" --json visibility --jq .visibility | grep -qx PRIVATE &&
+gh repo view "$repo" --json visibility --jq .visibility | grep -qx PUBLIC &&
   gh release create "$tag" "build/$asset" "build/$asset.sha256" \
-    --repo "$repo" --verify-tag --prerelease \
+    --repo "$repo" --verify-tag --latest \
     --title "Localhost Manager $version" --notes-file /path/to/release-notes.md
 ```
 
 Download the uploaded assets with `gh release download` and verify the archive with `shasum -a 256 -c`.
 
-The private preview uses an ad hoc signature. For public distribution outside the Mac App Store, prepare a Developer ID signature and follow [Apple’s notarization guide](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution).
+The current GitHub download uses an ad hoc signature. For future Developer ID builds, follow [Apple’s signing and notarization guide](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution).

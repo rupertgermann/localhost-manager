@@ -6,11 +6,11 @@ Localhost Manager is a native macOS app for discovering and managing local devel
 
 ## Install
 
-The private preview requires macOS 14 Sonoma or later. The release runs on Apple Silicon and Intel Macs.
+Localhost Manager requires macOS 14 Sonoma or later and runs on Apple Silicon and Intel Macs.
 
-1. Sign in to GitHub with an account that has access to this repository. Download the macOS ZIP from [Releases](https://github.com/rupertgermann/localhost-manager/releases).
+1. Download the macOS ZIP from the [latest GitHub release](https://github.com/rupertgermann/localhost-manager/releases/latest).
 2. Unzip the archive and move **Localhost Manager.app** to **Applications**.
-3. Open **Localhost Manager**. The preview uses an ad hoc signature, so macOS may block the first launch. For the verified archive from this repository, use **System Settings → Privacy & Security → Open Anyway** after the first attempt. See [Apple’s instructions for opening an app](https://support.apple.com/en-us/102445).
+3. Open **Localhost Manager**. The app uses an ad hoc signature and macOS may block the first launch. Verify the ZIP with the SHA-256 file on the release page before approving the app in **System Settings → Privacy & Security → Open Anyway**. See [Apple’s instructions for opening an app](https://support.apple.com/en-us/102445).
 
 ## Use the app
 
@@ -33,7 +33,7 @@ swift test
 open "build/Localhost Manager.app"
 ```
 
-See the [release guide](docs/releasing.md) to build and verify the private distribution archive.
+See the [release guide](docs/releasing.md) to build and verify the GitHub release archive.
 
 ## Privacy
 
