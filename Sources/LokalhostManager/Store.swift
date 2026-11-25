@@ -13,7 +13,12 @@ final class AppStore: ObservableObject {
     @Published private(set) var managed: [UUID: ManagedStatus] = [:]
     @Published private(set) var managedErrors: [UUID: String] = [:]
     @Published private(set) var actions: [String: ServiceAction] = [:]
+    @Published private(set) var excludedDirectories: Set<String> = []
     private var refreshRequested = false
+
+    var localProjects: [Project] {
+        catalog.projects.filter { !excludedDirectories.contains($0.directory) }
+    }
 
     init(dataDirectory: URL? = nil) {
         let environment = ProcessInfo.processInfo.environment
@@ -51,14 +56,16 @@ final class AppStore: ObservableObject {
                 inventory = ListenerInventory(listeners: inventory.listeners, warning: error.localizedDescription, visibility: .unavailable)
                 continue
             }
-            let jobs = ManagedJobs(directory: dataDirectory), services = catalog.services, listeners = snapshot.listeners
-            (managed, managedErrors) = await Task.detached {
+            let jobs = ManagedJobs(directory: dataDirectory), savedCatalog = catalog, listeners = snapshot.listeners
+            (managed, managedErrors, excludedDirectories) = await Task.detached {
                 var states: [UUID: ManagedStatus] = [:], errors: [UUID: String] = [:]
-                for service in services {
+                for service in savedCatalog.services {
                     do { states[service.id] = try jobs.status(service.id, listeners: listeners) }
                     catch { errors[service.id] = error.localizedDescription }
                 }
-                return (states, errors)
+                let volumes = LocalVolumes()
+                let directories = Set(savedCatalog.projects.map(\.directory) + savedCatalog.services.compactMap(\.directory))
+                return (states, errors, directories.filter { volumes.resolveLocalPath($0) == nil })
             }.value
             inventory = snapshot
         } while refreshRequested

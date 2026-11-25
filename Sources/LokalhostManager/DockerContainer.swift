@@ -48,8 +48,9 @@ struct DockerContainer: Decodable, Identifiable {
         number = try label(.number)
         containerDirectory = try data.decodeIfPresent(String.self, forKey: .containerDirectory).map { $0.isEmpty ? "/" : $0 }
         let mounts = try data.decodeIfPresent([Mount].self, forKey: .mounts) ?? []
-        mountedWorkingDirectory = Self.hostPath(for: containerDirectory, in: mounts)
-        workingDirectory = try label(.workingDirectory).map(physicalDirectory)
+        let volumes = LocalVolumes()
+        mountedWorkingDirectory = Self.hostPath(for: containerDirectory, in: mounts).flatMap { volumes.isNetworkPath($0) ? nil : $0 }
+        workingDirectory = try label(.workingDirectory).flatMap(volumes.resolveLocalPath)
         oneoff = try label(.oneoff)?.lowercased() == "true"
         let published = try data.decodeIfPresent([String: [Address]?].self, forKey: .ports) ?? [:]
         var ports = Set<DockerPort>()

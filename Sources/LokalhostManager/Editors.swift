@@ -39,11 +39,14 @@ struct ProjectEditor: View {
         let path = (directory as NSString).expandingTildeInPath
         do {
             let folder = try await Task.detached {
+                guard let localPath = LocalVolumes().resolveLocalPath(path) else {
+                    throw ManagerError("Choose a project folder on a local filesystem.")
+                }
                 var isDirectory: ObjCBool = false
-                guard path.hasPrefix("/"), FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue else {
+                guard localPath.hasPrefix("/"), FileManager.default.fileExists(atPath: localPath, isDirectory: &isDirectory), isDirectory.boolValue else {
                     throw ManagerError("Choose an existing project folder.")
                 }
-                return physicalDirectory(path)
+                return localPath
             }.value
             var next = store.catalog
             next.projects.append(Project(name: name.trimmingCharacters(in: .whitespacesAndNewlines), directory: folder))
@@ -75,7 +78,7 @@ struct ServiceEditor: View {
             LabeledContent("Service name") { TextField("Service name", text: $record.name).labelsHidden() }
             Picker("Project", selection: $record.projectID) {
                 Text("Assign automatically").tag(UUID?.none)
-                ForEach(store.catalog.projects) { project in Text(project.name).tag(Optional(project.id)) }
+                ForEach(store.localProjects) { project in Text(project.name).tag(Optional(project.id)) }
             }
             if !row.bindings.isEmpty {
                 LabeledContent("Active bindings", value: row.bindings.map(\.description).joined(separator: "\n"))
@@ -123,7 +126,11 @@ struct ServiceEditor: View {
             var edited = record
             edited.name = record.name.trimmingCharacters(in: .whitespacesAndNewlines)
             if let path = edited.directory {
-                edited.directory = await Task.detached { physicalDirectory((path as NSString).expandingTildeInPath) }.value
+                let expanded = (path as NSString).expandingTildeInPath
+                guard let localPath = await Task.detached(operation: { LocalVolumes().resolveLocalPath(expanded) }).value else {
+                    throw ManagerError("Choose a working directory on a local filesystem.")
+                }
+                edited.directory = localPath
             }
             if let path = edited.envFile { edited.envFile = (path as NSString).expandingTildeInPath }
             if edited.startCommand != nil, edited.directory?.hasPrefix("/") != true {
@@ -132,6 +139,9 @@ struct ServiceEditor: View {
             if let path = edited.logPath {
                 let expanded = (path as NSString).expandingTildeInPath
                 guard expanded.hasPrefix("/") else { throw ManagerError("Enter an absolute path to the log file.") }
+                guard await Task.detached(operation: { LocalVolumes().resolveLocalPath(expanded) != nil }).value else {
+                    throw ManagerError("Choose a log file on a local filesystem.")
+                }
                 edited.logPath = expanded
             }
             edited.webTargets = try WebTarget.confirmed(targets, existing: record.webTargets, bindings: bindings)

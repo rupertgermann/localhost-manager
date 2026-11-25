@@ -62,8 +62,12 @@ extension HostBinding {
             return
         }
         let fields = try decoder.container(keyedBy: CodingKeys.self)
-        try self.init(family: fields.decode(String.self, forKey: .family), host: fields.decode(String.self, forKey: .host),
-                      port: fields.decode(Int.self, forKey: .port))
+        let family = try fields.decode(String.self, forKey: .family)
+        let host = try fields.decode(String.self, forKey: .host)
+        var address = in_addr()
+        // lsof could report an IPv4 address under the IPv6 socket family.
+        let mappedIPv4 = family == "IPv6" && inet_pton(AF_INET, host, &address) == 1
+        try self.init(family: mappedIPv4 ? "IPv4" : family, host: host, port: fields.decode(Int.self, forKey: .port))
     }
 }
 
@@ -74,6 +78,7 @@ struct LocalListener {
     var directory: String?
     var executable: String?
     var bindings: [HostBinding] = []
+    var hasNetworkDirectory = false
 
     static let dockerControlError = "Manage Docker port forwarding through its container."
 
@@ -112,59 +117,39 @@ struct ListenerInventory {
         guard visibility == .current else { throw ManagerError(warning ?? "Could not verify the listener inventory.") }
     }
 
-    static func currentListeners() async throws -> [LocalListener] {
-        let inventory = try await scan()
+    static func currentListeners(includeDirectories: Bool = false) async throws -> [LocalListener] {
+        let inventory = includeDirectories ? try await scan() : try TCPListenerScan.inventory()
         try inventory.requireCurrent()
         return inventory.listeners
     }
 
     static func scan() async throws -> Self {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
-        process.arguments = ["-nP", "+c", "0", "-iTCP", "-sTCP:LISTEN", "-F0pcuftn"]
-        let output = Pipe(), errors = Pipe()
-        process.standardOutput = output
-        process.standardError = errors
-        try process.run()
-        let stderr = Task.detached { errors.fileHandleForReading.readDataToEndOfFile() }
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        let diagnostic = String(decoding: await stderr.value, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard process.terminationStatus == 0 || (process.terminationStatus == 1 && (diagnostic.isEmpty || !data.isEmpty)) else {
-            throw ManagerError("Could not read the TCP listeners. " + diagnostic)
-        }
-
-        var listeners: [LocalListener] = []
-        var family = ""
-        for field in data.split(separator: 0) {
-            let field = field.drop(while: { $0 == 10 })
-            let value = String(decoding: field.dropFirst(), as: UTF8.self)
-            switch field.first {
-            case 112: // p
-                guard let pid = pid_t(value) else { continue }
-                var cwd = proc_vnodepathinfo()
-                let size = Int32(MemoryLayout.size(ofValue: cwd))
-                let directory = proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, 0, &cwd, size) == size
-                    ? withUnsafeBytes(of: &cwd.pvi_cdir.vip_path) { String(decoding: $0.prefix(while: { $0 != 0 }), as: UTF8.self) } : nil
-                let executable = ProcessIdentity.executable(of: pid)
-                listeners.append(LocalListener(pid: pid, name: "Process \(pid)", identity: ProcessIdentity.read(pid), directory: directory.map(physicalDirectory), executable: executable))
-            case 99 where !listeners.isEmpty: listeners[listeners.count - 1].name = value // c
-            case 102: family = "" // f
-            case 116: family = value // t
-            case 110 where !listeners.isEmpty: // n
-                guard let colon = value.lastIndex(of: ":"), let port = Int(value[value.index(after: colon)...]) else { continue }
-                let binding = HostBinding(family: family, host: String(value[..<colon]), port: port)
-                if !listeners[listeners.count - 1].bindings.contains(binding) {
-                    listeners[listeners.count - 1].bindings.append(binding)
-                }
-            default: break
+        var inventory = try TCPListenerScan.inventory()
+        let volumes = LocalVolumes()
+        for index in inventory.listeners.indices {
+            var cwd = proc_vnodepathinfo()
+            let size = Int32(MemoryLayout.size(ofValue: cwd))
+            let pid = inventory.listeners[index].pid
+            guard proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, 0, &cwd, size) == size else { continue }
+            if volumes.isNetworkFileSystem(cwd.pvi_cdir.vip_vi.vi_fsid) {
+                inventory.listeners[index].hasNetworkDirectory = true
+                continue
+            }
+            let directory = withUnsafeBytes(of: &cwd.pvi_cdir.vip_path) {
+                String(decoding: $0.prefix(while: { $0 != 0 }), as: UTF8.self)
+            }
+            if volumes.isNetworkPath(directory) {
+                inventory.listeners[index].hasNetworkDirectory = true
+            } else if directory.hasPrefix("/") {
+                inventory.listeners[index].directory = directory
             }
         }
-        listeners.removeAll { $0.bindings.isEmpty }
-        let incomplete = listeners.contains { $0.directory == nil || $0.identity == nil || $0.executable == nil }
-        let warning = !diagnostic.isEmpty ? diagnostic : incomplete ? "Some processes have incomplete identity, executable or directory information." : nil
-        let partial = !diagnostic.isEmpty || (process.terminationStatus != 0 && !data.isEmpty)
-        return Self(listeners: listeners, warning: warning ?? (partial ? "The listener inventory is incomplete." : nil),
-                    visibility: partial ? .partial : .current)
+        let incomplete = inventory.listeners.contains {
+            !$0.hasNetworkDirectory && ($0.directory == nil || $0.identity == nil || $0.executable == nil)
+        }
+        if inventory.warning == nil && incomplete {
+            inventory.warning = "Some processes have incomplete identity, executable or directory information."
+        }
+        return inventory
     }
 }
