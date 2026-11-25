@@ -97,7 +97,7 @@ private struct DockerEditor: View {
             LabeledContent("Container", value: row.editableRecord.name)
             Picker("Project", selection: $projectID) {
                 Text("Assign automatically").tag(UUID?.none)
-                ForEach(store.catalog.projects) { project in Text(project.name).tag(Optional(project.id)) }
+                ForEach(store.localProjects) { project in Text(project.name).tag(Optional(project.id)) }
             }
             Text("Local web addresses").font(.headline)
             TextEditor(text: $targets).font(.body.monospaced()).accessibilityLabel("Web addresses")

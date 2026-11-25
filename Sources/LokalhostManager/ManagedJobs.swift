@@ -137,7 +137,7 @@ struct ManagedJobs {
         defer { close(lock) }
         guard flock(lock, LOCK_EX | LOCK_NB) == 0 else { throw ManagerError("Another action is in progress for this service.") }
         let guardFile = home.appendingPathComponent("predecessor.json")
-        let listeners = try await ListenerInventory.currentListeners()
+        let listeners = try await ListenerInventory.currentListeners(includeDirectories: action == .start)
         let state = try status(service.id, listeners: listeners)
         let configuration = action == .stop ? nil : try configuration(for: service)
         let predecessor: Predecessor
@@ -174,7 +174,8 @@ struct ManagedJobs {
         previous.ports.formUnion(state?.observedBindings ?? [])
         if let executable = service.executable {
             var candidates = listeners.filter {
-                ($0.directory == service.directory && ($0.executable == nil || $0.executable == executable)) ||
+                guard !$0.hasNetworkDirectory else { return false }
+                return ($0.directory == service.directory && ($0.executable == nil || $0.executable == executable)) ||
                 ($0.directory == nil && $0.executable == executable)
             }
             for other in services where other.id != service.id && !candidates.isEmpty {
@@ -233,20 +234,28 @@ struct ManagedJobs {
               let command = service.startCommand, !command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw ManagerError("Confirm the working directory and start command.")
         }
+        let volumes = LocalVolumes()
+        guard let workingDirectory = volumes.resolveLocalPath(path) else {
+            throw ManagerError("Choose a working directory on a local filesystem.")
+        }
         var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue else {
+        guard FileManager.default.fileExists(atPath: workingDirectory, isDirectory: &isDirectory), isDirectory.boolValue else {
             throw ManagerError("Working directory not found: \(path)")
         }
         var env = ["PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"]
         if let envFile = service.envFile, !envFile.isEmpty {
-            let url = URL(fileURLWithPath: envFile, relativeTo: URL(fileURLWithPath: path, isDirectory: true))
+            let url = URL(fileURLWithPath: envFile, isDirectory: false,
+                          relativeTo: URL(fileURLWithPath: workingDirectory, isDirectory: true))
+            guard let localPath = volumes.resolveLocalPath(url.path) else {
+                throw ManagerError("Choose an environment file on a local filesystem.")
+            }
             let data: String
-            do { data = try String(contentsOf: url, encoding: .utf8) }
+            do { data = try String(contentsOfFile: localPath, encoding: .utf8) }
             catch { throw ManagerError("Environment file missing, unreadable or not UTF-8: \(url.path)") }
             env.merge(try ManagedEnvironment.parse(data)) { _, custom in custom }
         }
 
-        return ["ProgramArguments": ["/bin/sh", "-c", command], "WorkingDirectory": path,
+        return ["ProgramArguments": ["/bin/sh", "-c", command], "WorkingDirectory": workingDirectory,
                 "EnvironmentVariables": env, "RunAtLoad": false, "KeepAlive": false]
     }
 
