@@ -2,6 +2,8 @@ import AppKit
 import SwiftUI
 
 struct Dashboard: View {
+    private static let refreshInterval: Duration = .seconds(60)
+
     @EnvironmentObject var store: AppStore
     @Environment(\.colorScheme) private var colorScheme
     @AppStorage("darkMode") private var darkMode: Bool?
@@ -137,13 +139,13 @@ struct Dashboard: View {
         .task {
             while !Task.isCancelled {
                 await docker.refresh()
-                do { try await Task.sleep(for: .seconds(5)) } catch { break }
+                do { try await Task.sleep(for: Self.refreshInterval) } catch { break }
             }
         }
         .task {
             await store.load()
             while !Task.isCancelled {
-                do { try await Task.sleep(for: .seconds(5)) } catch { break }
+                do { try await Task.sleep(for: Self.refreshInterval) } catch { break }
                 await store.refresh()
             }
         }
