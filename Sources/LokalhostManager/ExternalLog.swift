@@ -10,7 +10,10 @@ enum FileLog: Equatable {
         guard let path, !path.isEmpty else {
             return .unavailable("No log file selected. Choose a file under Edit.")
         }
-        let fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC | O_NOCTTY)
+        guard let localPath = LocalVolumes().resolveLocalPath(path) else {
+            return .unavailable("Choose a log file on a local filesystem.")
+        }
+        let fd = open(localPath, O_RDONLY | O_NONBLOCK | O_CLOEXEC | O_NOCTTY)
         guard fd >= 0 else { return .unavailable("Could not read the log file: \(String(cString: strerror(errno))).") }
         let file = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
         do {

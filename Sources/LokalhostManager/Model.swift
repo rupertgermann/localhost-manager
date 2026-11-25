@@ -3,9 +3,7 @@ import Foundation
 
 // Foundation may abbreviate /private/tmp to /tmp again when standardizing a file URL.
 func physicalDirectory(_ path: String) -> String {
-    guard path.hasPrefix("/"), let buffer = realpath(path, nil) else { return path }
-    defer { free(buffer) }
-    return String(cString: buffer)
+    LocalVolumes().resolveLocalPath(path) ?? path
 }
 
 struct Project: Identifiable, Codable {

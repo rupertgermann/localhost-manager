@@ -20,8 +20,13 @@ struct Dashboard: View {
     var body: some View {
         let isDark = darkMode ?? (colorScheme == .dark)
         let appearanceAction = isDark ? "Switch to Light Mode" : "Switch to Dark Mode"
+        let projects = store.localProjects
+        let projectIDs = Set(projects.map(\.id))
         let listeners = docker.inventory.nativeListeners(store.inventory.listeners)
-        let detectedRows = store.catalog.rows(for: listeners, managed: store.managed)
+        let detectedRows = store.catalog.rows(for: listeners, managed: store.managed).filter { row in
+            (row.managed?.isRunning == true || row.listener?.hasNetworkDirectory != true) &&
+                row.record?.directory.map(store.excludedDirectories.contains) != true
+        }
         let localRows = detectedRows.filter { row in
             (systemServices || row.listener?.isSystem != true) &&
                 !store.catalog.hides(name: row.name, ports: row.bindings.map(\.port))
@@ -44,7 +49,7 @@ struct Dashboard: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Local Services").font(.largeTitle.bold())
                     let serviceCount = rows.count + containers.count
-                    let projectCount = store.catalog.projects.count
+                    let projectCount = projects.count
                     Text("\(serviceCount) \(serviceCount == 1 ? "service" : "services") · \(projectCount) \(projectCount == 1 ? "project" : "projects")")
                         .foregroundStyle(.secondary)
                 }
@@ -86,15 +91,15 @@ struct Dashboard: View {
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 15) {
-                    ForEach(store.catalog.projects) { project in
+                    ForEach(projects) { project in
                         let services = rows.filter { $0.projectID == project.id }
                         let assigned = containers.filter { $0.projectID == project.id }
                         if !services.isEmpty || !assigned.isEmpty || (filter.isEmpty && selectedCategory == nil) {
                             group(project.name, rows: services, containers: assigned, project: project)
                         }
                     }
-                    let unassigned = rows.filter { $0.projectID == nil }
-                    let automatic = containers.filter { $0.projectID == nil }
+                    let unassigned = rows.filter { $0.projectID.map(projectIDs.contains) != true }
+                    let automatic = containers.filter { $0.projectID.map(projectIDs.contains) != true }
                     let composeProjects = Set(automatic.compactMap { $0.editableRecord.composeProject }).sorted()
                     ForEach(composeProjects, id: \.self) { name in
                         group(name, rows: [], containers: automatic.filter { $0.editableRecord.composeProject == name })
@@ -326,12 +331,16 @@ struct WorkingDirectoryLine: View {
             Image(systemName: "folder")
         }
         Group {
-            if let hostPath, hostPath.hasPrefix("/") {
+            if let hostPath, hostPath.hasPrefix("/"), !LocalVolumes().isNetworkPath(hostPath) {
                 Button {
+                    guard let localPath = LocalVolumes().resolveLocalPath(hostPath) else {
+                        store.message = "Choose a folder on a local filesystem."
+                        return
+                    }
                     var isDirectory: ObjCBool = false
-                    guard FileManager.default.fileExists(atPath: hostPath, isDirectory: &isDirectory),
+                    guard FileManager.default.fileExists(atPath: localPath, isDirectory: &isDirectory),
                           isDirectory.boolValue,
-                          NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: hostPath) else {
+                          NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: localPath) else {
                         store.message = "Could not open this folder in Finder: " + hostPath
                         return
                     }

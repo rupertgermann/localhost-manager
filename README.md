@@ -17,6 +17,7 @@ Localhost Manager requires macOS 14 Sonoma or later and runs on Apple Silicon an
 - Click a category above the list to filter services such as Docker, Node.js, or Python. **All** clears the category filter. You can also search by name, port, or working directory.
 - Open the eye menu on a row to hide services with the same name or host port. Open **Settings** to see matching services and remove a rule. Rules only affect what the app displays.
 - Choose **Add Project** and select a folder to group services by directory. Use **Edit** to assign a native service or **Assign** to assign a container.
+- Use local folders and files for projects, service settings, and logs. Discovery skips network volumes.
 - Click an address to open it in your browser. The app uses HTTP by default and HTTPS for port 443. Save a full web address on the service to use a different scheme or path.
 - Click a local working directory to open it in Finder. Docker working directories can open in Finder when a bind mount maps them to a local folder.
 - Add a working directory and **Start command** in **Edit** to let the app start and restart a native service. Jobs run under your macOS account and keep running when you quit the app. **Logs** shows captured output for managed jobs or a log file you specify for an external process.
